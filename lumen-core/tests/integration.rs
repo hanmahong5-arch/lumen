@@ -1,0 +1,327 @@
+//! Integration tests for lumen-core using mock trace files.
+
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+use std::path::PathBuf;
+
+use lumen_core::cost::CostTracker;
+use lumen_core::replay::ReplayEngine;
+use lumen_core::trace::TraceStore;
+
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Create a temp directory with test trace files.
+fn setup_trace_dir() -> PathBuf {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("lumen_test_{}_{id}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    // Write a successful trace
+    let trace1 = serde_json::json!({
+        "trace_id": "trace_abc123",
+        "agent_id": "research-agent",
+        "task_id": 42,
+        "steps": [
+            {
+                "step_num": 0,
+                "step_type": { "LlmCall": { "model": "claude-sonnet-4-6", "finish_reason": "tool_use" } },
+                "started_at_ms": 1710000000000_u64,
+                "duration_ms": 1200,
+                "tokens": { "prompt_tokens": 500, "completion_tokens": 100 },
+                "metadata": []
+            },
+            {
+                "step_num": 1,
+                "step_type": { "ToolCall": { "tool_name": "search_web", "success": true } },
+                "started_at_ms": 1710000001200_u64,
+                "duration_ms": 800,
+                "tokens": null,
+                "metadata": []
+            },
+            {
+                "step_num": 2,
+                "step_type": { "LlmCall": { "model": "claude-sonnet-4-6", "finish_reason": "tool_use" } },
+                "started_at_ms": 1710000002000_u64,
+                "duration_ms": 900,
+                "tokens": { "prompt_tokens": 800, "completion_tokens": 150 },
+                "metadata": []
+            },
+            {
+                "step_num": 3,
+                "step_type": { "ToolCall": { "tool_name": "read_url", "success": true } },
+                "started_at_ms": 1710000002900_u64,
+                "duration_ms": 500,
+                "tokens": null,
+                "metadata": []
+            },
+            {
+                "step_num": 4,
+                "step_type": { "LlmCall": { "model": "claude-sonnet-4-6", "finish_reason": "end_turn" } },
+                "started_at_ms": 1710000003400_u64,
+                "duration_ms": 1500,
+                "tokens": { "prompt_tokens": 1200, "completion_tokens": 300 },
+                "metadata": []
+            }
+        ],
+        "status": "Completed",
+        "total_tokens": { "prompt_tokens": 2500, "completion_tokens": 550 },
+        "total_cost_usd": 0.12,
+        "started_at_ms": 1710000000000_u64,
+        "completed_at_ms": 1710000004900_u64
+    });
+
+    // Write a failed trace (older)
+    let trace2 = serde_json::json!({
+        "trace_id": "trace_def456",
+        "agent_id": "summary-agent",
+        "task_id": 99,
+        "steps": [
+            {
+                "step_num": 0,
+                "step_type": { "LlmCall": { "model": "gpt-4o", "finish_reason": "tool_use" } },
+                "started_at_ms": 1709990000000_u64,
+                "duration_ms": 2000,
+                "tokens": { "prompt_tokens": 1000, "completion_tokens": 200 },
+                "metadata": []
+            },
+            {
+                "step_num": 1,
+                "step_type": { "ToolCall": { "tool_name": "run_code", "success": false } },
+                "started_at_ms": 1709990002000_u64,
+                "duration_ms": 5000,
+                "tokens": null,
+                "metadata": []
+            },
+            {
+                "step_num": 2,
+                "step_type": { "Error": { "message": "tool timeout after 5000ms" } },
+                "started_at_ms": 1709990007000_u64,
+                "duration_ms": 0,
+                "tokens": null,
+                "metadata": []
+            }
+        ],
+        "status": { "Failed": "tool timeout" },
+        "total_tokens": { "prompt_tokens": 1000, "completion_tokens": 200 },
+        "total_cost_usd": 0.08,
+        "started_at_ms": 1709990000000_u64,
+        "completed_at_ms": 1709990007000_u64
+    });
+
+    std::fs::write(
+        dir.join("trace_abc123.json"),
+        serde_json::to_string_pretty(&trace1).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("trace_def456.json"),
+        serde_json::to_string_pretty(&trace2).unwrap(),
+    )
+    .unwrap();
+
+    // Write a non-trace JSON file (should be skipped)
+    std::fs::write(dir.join("config.json"), r#"{"not": "a trace"}"#).unwrap();
+
+    // Write a non-JSON file (should be skipped)
+    std::fs::write(dir.join("notes.txt"), "some notes").unwrap();
+
+    dir
+}
+
+fn cleanup(dir: &PathBuf) {
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_trace_listing() {
+    let dir = setup_trace_dir();
+
+    let store = TraceStore::new(&dir);
+    let traces = store.list().unwrap();
+
+    assert_eq!(traces.len(), 2, "should find exactly 2 traces");
+
+    // Newest first
+    assert_eq!(traces[0].trace_id, "trace_abc123");
+    assert_eq!(traces[0].agent_name, "research-agent");
+    assert!(traces[0].success);
+    assert_eq!(traces[0].iterations, 3); // 3 LLM calls
+    assert!((traces[0].cost_usd - 0.12).abs() < f64::EPSILON);
+    assert_eq!(traces[0].duration_ms, 4900);
+    assert_eq!(traces[0].prompt_tokens, 2500);
+    assert_eq!(traces[0].completion_tokens, 550);
+
+    assert_eq!(traces[1].trace_id, "trace_def456");
+    assert_eq!(traces[1].agent_name, "summary-agent");
+    assert!(!traces[1].success);
+
+    cleanup(&dir);
+}
+
+#[test]
+fn test_replay_success() {
+    let dir = setup_trace_dir();
+
+    let engine = ReplayEngine::new(&dir);
+    let replay = engine.replay("trace_abc123").unwrap();
+
+    assert_eq!(replay.trace_id, "trace_abc123");
+    assert_eq!(replay.agent_name, "research-agent");
+    assert!(replay.success);
+    assert_eq!(replay.total_iterations, 3);
+    assert!((replay.original_cost_usd - 0.12).abs() < f64::EPSILON);
+
+    // Step 1: LLM(tool_use) → search_web
+    assert_eq!(replay.steps.len(), 3);
+    assert_eq!(replay.steps[0].step, 1);
+    match &replay.steps[0].decision {
+        lumen_core::replay::ReplayDecision::ToolCalls { calls } => {
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].tool_name, "search_web");
+            assert!(calls[0].success);
+        }
+        _ => panic!("expected ToolCalls"),
+    }
+
+    // Step 2: LLM(tool_use) → read_url
+    match &replay.steps[1].decision {
+        lumen_core::replay::ReplayDecision::ToolCalls { calls } => {
+            assert_eq!(calls[0].tool_name, "read_url");
+        }
+        _ => panic!("expected ToolCalls"),
+    }
+
+    // Step 3: LLM(end_turn) → Final answer
+    match &replay.steps[2].decision {
+        lumen_core::replay::ReplayDecision::FinalAnswer { content } => {
+            assert!(content.contains("end_turn"));
+        }
+        _ => panic!("expected FinalAnswer"),
+    }
+
+    cleanup(&dir);
+}
+
+#[test]
+fn test_replay_failed_run() {
+    let dir = setup_trace_dir();
+
+    let engine = ReplayEngine::new(&dir);
+    let replay = engine.replay("trace_def456").unwrap();
+
+    assert!(!replay.success);
+    assert_eq!(replay.agent_name, "summary-agent");
+
+    // Should have tool call step + error step
+    assert!(replay.steps.len() >= 2);
+
+    // Last step should be the error
+    let last = replay.steps.last().unwrap();
+    match &last.decision {
+        lumen_core::replay::ReplayDecision::FinalAnswer { content } => {
+            assert!(content.contains("timeout"));
+        }
+        _ => panic!("expected error as FinalAnswer"),
+    }
+
+    cleanup(&dir);
+}
+
+#[test]
+fn test_replay_not_found() {
+    let dir = setup_trace_dir();
+
+    let engine = ReplayEngine::new(&dir);
+    let result = engine.replay("nonexistent");
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("nonexistent"));
+
+    cleanup(&dir);
+}
+
+#[test]
+fn test_cost_report() {
+    let dir = setup_trace_dir();
+
+    let tracker = CostTracker::new(&dir);
+    // Report for all time (since_ms = 0)
+    let report = tracker.report(0).unwrap();
+
+    assert_eq!(report.total_runs, 2);
+    assert!((report.total_usd - 0.20).abs() < 0.01);
+    assert_eq!(report.total_prompt_tokens, 3500); // 2500 + 1000
+    assert_eq!(report.total_completion_tokens, 750); // 550 + 200
+
+    // By agent
+    assert_eq!(report.by_agent.len(), 2);
+    assert!((report.by_agent["research-agent"] - 0.12).abs() < f64::EPSILON);
+    assert!((report.by_agent["summary-agent"] - 0.08).abs() < f64::EPSILON);
+
+    // By model
+    assert!(report.by_model.contains_key("claude-sonnet-4-6"));
+    assert!(report.by_model.contains_key("gpt-4o"));
+
+    cleanup(&dir);
+}
+
+#[test]
+fn test_cost_report_time_filter() {
+    let dir = setup_trace_dir();
+
+    let tracker = CostTracker::new(&dir);
+    // Only recent trace (started >= 1710000000000)
+    let report = tracker.report(1710000000000).unwrap();
+
+    assert_eq!(report.total_runs, 1);
+    assert!((report.total_usd - 0.12).abs() < f64::EPSILON);
+
+    cleanup(&dir);
+}
+
+#[test]
+fn test_empty_directory() {
+    let dir = std::env::temp_dir().join(format!("lumen_empty_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let store = TraceStore::new(&dir);
+    assert!(store.list().unwrap().is_empty());
+
+    let engine = ReplayEngine::new(&dir);
+    assert!(engine.list_traces().unwrap().is_empty());
+
+    let tracker = CostTracker::new(&dir);
+    let report = tracker.report(0).unwrap();
+    assert_eq!(report.total_runs, 0);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_nonexistent_directory() {
+    let dir = PathBuf::from("/tmp/lumen_nonexistent_dir_12345");
+
+    // Should return empty, not error
+    let store = TraceStore::new(&dir);
+    assert!(store.list().unwrap().is_empty());
+}
+
+#[test]
+fn test_list_traces() {
+    let dir = setup_trace_dir();
+
+    let engine = ReplayEngine::new(&dir);
+    let ids = engine.list_traces().unwrap();
+
+    assert_eq!(ids.len(), 2);
+    // Newest first
+    assert_eq!(ids[0], "trace_abc123");
+    assert_eq!(ids[1], "trace_def456");
+
+    cleanup(&dir);
+}

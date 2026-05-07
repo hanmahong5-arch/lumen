@@ -1,0 +1,16 @@
+[package]
+name = "lumen-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core engine for Lumen — AI agent observability and reliability"
+
+[dependencies]
+kova-types = { path = "../../kova-types", features = ["serde"] }
+thiserror = "2"
+tracing = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints]
+workspace = true

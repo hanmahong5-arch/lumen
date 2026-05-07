@@ -1,0 +1,22 @@
+/target
+**/*.rs.bk
+*.pyc
+__pycache__/
+*.egg-info/
+dist/
+build/
+.env
+.venv/
+*.so
+*.dylib
+*.dll
+*.swp
+*.swo
+.DS_Store
+.idea/
+.vscode/
+.pytest_cache/
+# Internal planning docs — not for public mirror
+_bmad-output/
+# Internal dev guide — references Kova/Lurus brand boundary
+CLAUDE.md
