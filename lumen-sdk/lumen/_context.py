@@ -449,13 +449,15 @@ def _emit_trace_completed(session: TraceSession) -> None:
         from lumen._event_bus import TraceCompleted, get_default_bus
 
         completed_at = _now_ms()
+        # Clamp to ≥1ms: same-ms start/end on fast machines yields 0,
+        # which displays as "broken" in dashboards. 1ms reflects clock resolution.
         event = TraceCompleted(
             trace_id=session.trace_id,
             agent_id=session.name,
             status=session.status,
             total_cost_usd=session.total_cost_usd,
             step_count=len(session.steps),
-            duration_ms=completed_at - session.started_at_ms,
+            duration_ms=max(1, completed_at - session.started_at_ms),
         )
         get_default_bus().emit(event)
     except Exception:

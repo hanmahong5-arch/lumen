@@ -27,7 +27,7 @@ Quick start::
     results = TraceQuery("./traces").agent("research").since("7d").execute()
 """
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 from lumen._anomaly import AnomalyDetector
 from lumen._batch_writer import BatchTraceWriter
