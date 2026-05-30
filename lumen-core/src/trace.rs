@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use kova_types::trace::{TraceStatus, TraceStepType};
+use crate::trace_types::{TraceStatus, TraceStepType};
 
 use crate::LumenError;
 

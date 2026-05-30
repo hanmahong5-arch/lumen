@@ -6,7 +6,9 @@ license.workspace = true
 description = "Core engine for Lumen — AI agent observability and reliability"
 
 [dependencies]
-kova-types = { path = "../../kova-types", features = ["serde"] }
+# kova-types trace surface is vendored locally (src/trace_types.rs) to keep
+# this open-core mirror buildable from a single clone — no private sibling repo
+# or unpublished crate dependency. Vendored from kova-types v0.2.0; keep in sync.
 thiserror = "2"
 tracing = "0.1"
 serde = { version = "1", features = ["derive"] }

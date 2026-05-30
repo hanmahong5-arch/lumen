@@ -6,9 +6,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use kova_types::trace::TraceStepType;
-
 use crate::LumenError;
+use crate::trace_types::{AgentTrace, TraceStepType};
 
 /// Cost record for a single agent run.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -69,7 +68,7 @@ pub struct CostAnomaly {
 ///
 /// If `total_cost_usd > 0`, uses it directly.
 /// Otherwise estimates from per-step token usage and model pricing.
-fn trace_cost(trace: &kova_types::trace::AgentTrace) -> f64 {
+fn trace_cost(trace: &AgentTrace) -> f64 {
     if trace.total_cost_usd > 0.0 {
         return trace.total_cost_usd;
     }

@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use kova_types::trace::{AgentTrace, TraceStatus, TraceStepType};
+use crate::trace_types::{AgentTrace, TraceStatus, TraceStepType};
 
 use crate::LumenError;
 

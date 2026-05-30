@@ -12,6 +12,7 @@ pub mod error;
 pub mod pricing;
 pub mod replay;
 pub mod trace;
+pub mod trace_types;
 
 mod trace_reader;
 

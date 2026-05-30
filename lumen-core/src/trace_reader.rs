@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use kova_types::trace::AgentTrace;
+use crate::trace_types::AgentTrace;
 
 use crate::LumenError;
 
