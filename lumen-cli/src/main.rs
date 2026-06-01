@@ -1,5 +1,7 @@
 //! Lumen CLI — illuminate your AI agents.
 
+mod pull;
+
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -49,9 +51,25 @@ enum Commands {
         #[arg(long, default_value = "9700")]
         port: u16,
     },
+    /// Pull traces from a running Kova into a local trace directory.
+    ///
+    /// Lists traces via `GET /api/v1/traces`, fetches each via
+    /// `GET /api/v1/traces/{id}`, and writes `{trace-dir}/{id}.json` so the
+    /// replay/cost/traces commands then work against pulled data.
+    Pull {
+        /// Base URL of the running Kova (e.g. http://100.122.83.20:3010).
+        #[arg(long)]
+        kova_url: String,
+        /// API key (`X-API-Key`). Falls back to LUMEN_KOVA_API_KEY then KOVA_API_KEY.
+        #[arg(long)]
+        api_key: Option<String>,
+        /// Directory to write pulled trace JSON files into.
+        #[arg(long, default_value = "./traces", alias = "wal-dir")]
+        trace_dir: String,
+    },
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Commands::Replay {
@@ -66,6 +84,55 @@ fn main() {
         } => cmd_cost(&last, &trace_dir, &format),
         Commands::Traces { trace_dir, limit } => cmd_traces(&trace_dir, limit),
         Commands::Dashboard { port } => cmd_dashboard(port),
+        Commands::Pull {
+            kova_url,
+            api_key,
+            trace_dir,
+        } => return cmd_pull(&kova_url, api_key, &trace_dir),
+    }
+    std::process::ExitCode::SUCCESS
+}
+
+/// Resolve the API key: explicit `--api-key` wins, then `LUMEN_KOVA_API_KEY`,
+/// then `KOVA_API_KEY`. Returns `None` if none set (unauthenticated request).
+fn resolve_api_key(explicit: Option<String>) -> Option<String> {
+    explicit
+        .or_else(|| std::env::var("LUMEN_KOVA_API_KEY").ok())
+        .or_else(|| std::env::var("KOVA_API_KEY").ok())
+        .filter(|k| !k.is_empty())
+}
+
+fn cmd_pull(kova_url: &str, api_key: Option<String>, trace_dir: &str) -> std::process::ExitCode {
+    let key = resolve_api_key(api_key);
+    let fetcher = pull::HttpFetcher::new(kova_url, key);
+    let dir = std::path::Path::new(trace_dir);
+
+    println!("\x1b[36m⇣ Pulling traces from {kova_url}\x1b[0m");
+    match pull::pull_into(&fetcher, dir) {
+        Ok(summary) => {
+            if summary.listed == 0 {
+                println!("  No traces on the server. Nothing to pull.");
+            } else {
+                println!(
+                    "  \x1b[32m✓ {} written\x1b[0m of {} listed → {}",
+                    summary.written,
+                    summary.listed,
+                    dir.display()
+                );
+                if !summary.skipped.is_empty() {
+                    println!(
+                        "  \x1b[33m⚠ {} skipped: {}\x1b[0m",
+                        summary.skipped.len(),
+                        summary.skipped.join(", ")
+                    );
+                }
+            }
+            std::process::ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("\x1b[31mError: {e}\x1b[0m");
+            std::process::ExitCode::FAILURE
+        }
     }
 }
 
