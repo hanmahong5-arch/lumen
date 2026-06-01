@@ -147,27 +147,23 @@ impl CostTracker {
             *by_agent.entry(t.agent_id.clone()).or_insert(0.0) += cost;
         }
 
-        // Group by model (extract from LlmCall steps)
+        // Group by model (extract from LlmCall steps).
+        // Compute each step's cost from its own token counts so a trace that
+        // mixes cheap and expensive models gets accurate per-model attribution
+        // rather than an equal split of the trace total.
+        // Steps whose `tokens` field is None contribute zero (not smeared).
         let mut by_model: HashMap<String, f64> = HashMap::new();
-        for (t, &cost) in filtered.iter().zip(trace_costs.iter()) {
-            let llm_steps: Vec<_> = t
-                .steps
-                .iter()
-                .filter_map(|s| {
-                    if let TraceStepType::LlmCall { ref model, .. } = s.step_type {
-                        Some((model.clone(), s.tokens))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            let llm_count = llm_steps.len();
-            if llm_count > 0 {
-                let per_call = cost / llm_count as f64;
-                for (model, _) in &llm_steps {
-                    let m: String = model.clone();
-                    *by_model.entry(m).or_insert(0.0) += per_call;
+        for t in filtered.iter() {
+            for s in &t.steps {
+                if let TraceStepType::LlmCall { ref model, .. } = s.step_type {
+                    let step_cost = s.tokens.map_or(0.0, |tok| {
+                        crate::pricing::estimate_cost(
+                            model,
+                            tok.prompt_tokens,
+                            tok.completion_tokens,
+                        )
+                    });
+                    *by_model.entry(model.clone()).or_insert(0.0) += step_cost;
                 }
             }
         }

@@ -427,6 +427,106 @@ fn test_cost_falls_back_to_estimate_when_total_is_zero() {
 }
 
 #[test]
+fn test_cost_by_model_uses_per_step_tokens_not_equal_split() {
+    // One trace with two LLM steps: one cheap (gpt-4o-mini), one expensive
+    // (claude-opus-4-6). Equal split would give each 50% of the trace total;
+    // per-step attribution must give each step its own token-derived cost.
+    let trace = serde_json::json!({
+        "trace_id": "trace_mixed_models",
+        "agent_id": "mixed-agent",
+        "task_id": 1,
+        "steps": [
+            {
+                "step_num": 0,
+                // gpt-4o-mini: $0.15/$0.60 per 1k. 100 prompt + 50 completion
+                // = (100*0.15 + 50*0.60)/1000 = (15 + 30)/1000 = $0.045
+                "step_type": { "LlmCall": { "model": "gpt-4o-mini", "finish_reason": "tool_use" } },
+                "started_at_ms": 1710000000000_u64,
+                "duration_ms": 500,
+                "tokens": { "prompt_tokens": 100, "completion_tokens": 50 },
+                "metadata": []
+            },
+            {
+                "step_num": 1,
+                // claude-opus-4-6: $15/$75 per 1k. 200 prompt + 100 completion
+                // = (200*15 + 100*75)/1000 = (3000 + 7500)/1000 = $10.50
+                "step_type": { "LlmCall": { "model": "claude-opus-4-6", "finish_reason": "end_turn" } },
+                "started_at_ms": 1710000000500_u64,
+                "duration_ms": 1500,
+                "tokens": { "prompt_tokens": 200, "completion_tokens": 100 },
+                "metadata": []
+            }
+        ],
+        "status": "Completed",
+        "total_tokens": { "prompt_tokens": 300, "completion_tokens": 150 },
+        "total_cost_usd": 0.0,
+        "started_at_ms": 1710000000000_u64,
+        "completed_at_ms": 1710000002000_u64
+    });
+    let dir = dir_with_one_trace("mixed_models", &trace);
+    let report = CostTracker::new(&dir).report(0).unwrap();
+
+    let mini_cost = (100.0 * 0.15 + 50.0 * 0.60) / 1000.0; // $0.045
+    let opus_cost = (200.0 * 15.0 + 100.0 * 75.0) / 1000.0; // $10.50
+
+    let actual_mini = report.by_model["gpt-4o-mini"];
+    let actual_opus = report.by_model["claude-opus-4-6"];
+
+    assert!(
+        (actual_mini - mini_cost).abs() < 1e-9,
+        "gpt-4o-mini: expected {mini_cost}, got {actual_mini}"
+    );
+    assert!(
+        (actual_opus - opus_cost).abs() < 1e-9,
+        "claude-opus-4-6: expected {opus_cost}, got {actual_opus}"
+    );
+
+    // The two must NOT be equal (the old equal-split bug would have made them
+    // half of the trace total each).
+    assert!(
+        (actual_mini - actual_opus).abs() > 1.0,
+        "per-model costs should differ by >$1, not be equal-split equal"
+    );
+
+    cleanup(&dir);
+}
+
+#[test]
+fn test_cost_by_model_none_tokens_attributes_zero() {
+    // A step with tokens: null must not smear any cost onto the model — it
+    // contributes $0.0 to by_model for that model.
+    let trace = serde_json::json!({
+        "trace_id": "trace_no_tokens",
+        "agent_id": "agent-x",
+        "task_id": 2,
+        "steps": [
+            {
+                "step_num": 0,
+                "step_type": { "LlmCall": { "model": "gpt-4o", "finish_reason": "end_turn" } },
+                "started_at_ms": 1710000000000_u64,
+                "duration_ms": 100,
+                "tokens": null,
+                "metadata": []
+            }
+        ],
+        "status": "Completed",
+        "total_tokens": { "prompt_tokens": 0, "completion_tokens": 0 },
+        "total_cost_usd": 0.0,
+        "started_at_ms": 1710000000000_u64,
+        "completed_at_ms": 1710000000100_u64
+    });
+    let dir = dir_with_one_trace("no_tokens", &trace);
+    let report = CostTracker::new(&dir).report(0).unwrap();
+
+    // Model key may exist but cost must be exactly 0.
+    if let Some(&cost) = report.by_model.get("gpt-4o") {
+        assert_eq!(cost, 0.0, "null-token step must attribute $0 to by_model");
+    }
+
+    cleanup(&dir);
+}
+
+#[test]
 fn test_empty_directory() {
     let dir = std::env::temp_dir().join(format!("lumen_empty_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
