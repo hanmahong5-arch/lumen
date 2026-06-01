@@ -50,6 +50,8 @@ fn normal_multi_step_parses() {
     assert!((t.total_cost_usd - 0.0123).abs() < f64::EPSILON);
     // Fresh run: no parent.
     assert_eq!(t.parent_trace_id, None);
+    // Current trace carries the on-disk schema version.
+    assert_eq!(t.schema_version, 1);
     // First step metadata preserved.
     assert_eq!(
         t.steps[0].metadata,
@@ -64,6 +66,8 @@ fn recovered_run_has_parent_and_recovery_marker() {
     assert_eq!(t.trace_id, "trace_recovered_002");
     // parent_trace_id links back to the crashed run.
     assert_eq!(t.parent_trace_id.as_deref(), Some("trace_normal_001"));
+    // Current trace carries the on-disk schema version.
+    assert_eq!(t.schema_version, 1);
 
     // First step is a recovery Checkpoint carrying the recovery markers.
     let first = &t.steps[0];
@@ -88,5 +92,7 @@ fn legacy_trace_without_parent_field_still_loads() {
     assert_eq!(t.trace_id, "trace_legacy_003");
     // The JSON has no `parent_trace_id` key at all; serde(default) → None.
     assert_eq!(t.parent_trace_id, None);
+    // No `schema_version` key either; serde(default) → 0 (pre-versioning trace).
+    assert_eq!(t.schema_version, 0);
     assert_eq!(t.status, TraceStatus::Completed);
 }

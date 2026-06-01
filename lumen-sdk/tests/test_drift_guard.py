@@ -50,6 +50,8 @@ def test_normal_multi_step_parses(examples: dict) -> None:
     assert abs(t.total_cost_usd - 0.0123) < 1e-12
     # Fresh run: no parent.
     assert t.parent_trace_id is None
+    # Current trace carries the on-disk schema version.
+    assert t.schema_version == 1
     # First step metadata preserved (this is the bug the fix addresses).
     assert t.steps[0].metadata == [("phase", "plan")]
 
@@ -59,6 +61,8 @@ def test_recovered_run_has_parent_and_recovery_marker(examples: dict) -> None:
     assert t.trace_id == "trace_recovered_002"
     # parent_trace_id links back to the crashed run.
     assert t.parent_trace_id == "trace_normal_001"
+    # Current trace carries the on-disk schema version.
+    assert t.schema_version == 1
 
     # First step is a recovery Checkpoint carrying the recovery markers.
     first = t.steps[0]
@@ -72,4 +76,6 @@ def test_legacy_trace_without_parent_field_still_loads(examples: dict) -> None:
     assert t.trace_id == "trace_legacy_003"
     # JSON has no parent_trace_id key at all -> defaults to None.
     assert t.parent_trace_id is None
+    # No schema_version key either -> defaults to 0 (pre-versioning trace).
+    assert t.schema_version == 0
     assert t.status == "Completed"

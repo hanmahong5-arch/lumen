@@ -69,6 +69,11 @@ class AgentTrace:
     # Rust side keeps legacy JSON (without this field) loadable on both sides.
     parent_trace_id: str | None = None
 
+    # On-disk trace schema version (TRACE_SCHEMA_VERSION = 1 at the latest sync).
+    # Mirrors kova-types AgentTrace.schema_version; defaults to 0 for legacy JSON
+    # written before this field existed, matching serde(default) on the Rust side.
+    schema_version: int = 0
+
     # v0.2 optional fields
     user_id: str = ""
     session_id: str = ""
@@ -129,6 +134,7 @@ def _parse_trace(raw: dict) -> AgentTrace:
         started_at_ms=raw.get("started_at_ms", 0),
         completed_at_ms=raw.get("completed_at_ms"),
         parent_trace_id=raw.get("parent_trace_id"),
+        schema_version=raw.get("schema_version", 0),
     )
 
     # v0.2 optional fields

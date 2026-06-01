@@ -35,7 +35,8 @@
     "total_cost_usd": 0.0123,
     "started_at_ms": 1710000000000,
     "completed_at_ms": 1710000002900,
-    "parent_trace_id": null
+    "parent_trace_id": null,
+    "schema_version": 1
   },
   "recovered_with_parent": {
     "trace_id": "trace_recovered_002",
@@ -64,7 +65,8 @@
     "total_cost_usd": 0.0,
     "started_at_ms": 1710000100000,
     "completed_at_ms": 1710000101150,
-    "parent_trace_id": "trace_normal_001"
+    "parent_trace_id": "trace_normal_001",
+    "schema_version": 1
   },
   "legacy_no_parent_field": {
     "trace_id": "trace_legacy_003",

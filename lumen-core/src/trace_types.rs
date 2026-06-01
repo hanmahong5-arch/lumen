@@ -1,7 +1,7 @@
 //! Vendored Agent execution trace types.
 //!
 //! vendored from 2b-svc-kova/kova-types/src/trace.rs (v0.2.0), keep in sync
-//! (last synced 2026-06-01: added `AgentTrace::parent_trace_id`)
+//! (last synced 2026-06-01: added `AgentTrace::schema_version`)
 //!
 //! Lumen consumes Kova's `AgentTrace`/`TraceStep`/`TraceStepType`/`TraceStatus`
 //! (and their `TokenUsage` dependency) purely as data read back from trace JSON
@@ -85,6 +85,14 @@ pub struct AgentTrace {
     /// (written before this field existed) readable.
     #[serde(default)]
     pub parent_trace_id: Option<String>,
+    /// On-disk trace schema version, stamped by Kova's constructors
+    /// (`TRACE_SCHEMA_VERSION` = 1 at the time of this sync).
+    ///
+    /// `#[serde(default)]` yields `0` for legacy trace JSON written before this
+    /// field existed, letting consumers tell a current trace (`1`) apart from a
+    /// pre-versioning one (`0`) without breaking the read path.
+    #[serde(default)]
+    pub schema_version: u32,
 }
 
 /// A single step within an Agent execution trace.
