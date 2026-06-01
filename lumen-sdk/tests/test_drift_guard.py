@@ -79,3 +79,22 @@ def test_legacy_trace_without_parent_field_still_loads(examples: dict) -> None:
     # No schema_version key either -> defaults to 0 (pre-versioning trace).
     assert t.schema_version == 0
     assert t.status == "Completed"
+
+
+def test_failed_trace_parses_status_with_reason(examples: dict) -> None:
+    # The {"Failed": "tool timeout"} status shape is the most consumer-breaking
+    # variant: a consumer that only handles plain-string statuses will silently
+    # misread it. Both the Rust and Python parsers must surface the reason.
+    t = examples["failed_trace"]
+    assert t.trace_id == "trace_failed_004"
+    # _parse_trace maps {"Failed": reason} -> status="Failed", failure_reason=reason.
+    assert t.status == "Failed", f"expected status 'Failed', got {t.status!r}"
+    assert t.failure_reason == "tool timeout", (
+        f"expected failure_reason 'tool timeout', got {t.failure_reason!r}"
+    )
+    assert t.schema_version == 1
+    assert len(t.steps) == 3
+    # Last step is an Error step.
+    last = t.steps[-1]
+    assert last.step_type == "Error"
+    assert last.error_message == "tool timeout"

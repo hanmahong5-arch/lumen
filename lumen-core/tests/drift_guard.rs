@@ -96,3 +96,27 @@ fn legacy_trace_without_parent_field_still_loads() {
     assert_eq!(t.schema_version, 0);
     assert_eq!(t.status, TraceStatus::Completed);
 }
+
+#[test]
+fn failed_trace_parses_status_with_reason() {
+    let ex = load_examples();
+    let t = &ex["failed_trace"];
+    assert_eq!(t.trace_id, "trace_failed_004");
+    // The `{"Failed":"tool timeout"}` status shape must round-trip into
+    // TraceStatus::Failed — the most consumer-breaking variant because any
+    // consumer that only handles string statuses will silently misread it.
+    assert_eq!(
+        t.status,
+        TraceStatus::Failed("tool timeout".to_string()),
+        "Failed status must carry the reason string verbatim"
+    );
+    assert_eq!(t.schema_version, 1);
+    assert_eq!(t.steps.len(), 3);
+    // Last step is an Error step carrying the same message.
+    let last = t.steps.last().unwrap();
+    assert!(
+        matches!(&last.step_type, TraceStepType::Error { message } if message == "tool timeout"),
+        "last step must be Error(tool timeout), got {:?}",
+        last.step_type
+    );
+}
