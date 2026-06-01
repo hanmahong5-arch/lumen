@@ -1,0 +1,89 @@
+{
+  "_comment": "Canonical AgentTrace examples shared by the Rust (lumen-core) and Python (lumen-sdk) parsers. Both test suites parse THIS file and assert the same fields — divergence between the two vendored copies is caught here. Mirrors kova-types AgentTrace JSON shape. Do not reformat field names; they are the on-disk contract.",
+  "normal_multi_step": {
+    "trace_id": "trace_normal_001",
+    "agent_id": "research-agent",
+    "task_id": 42,
+    "steps": [
+      {
+        "step_num": 0,
+        "step_type": { "LlmCall": { "model": "claude-sonnet-4-6", "finish_reason": "tool_use" } },
+        "started_at_ms": 1710000000000,
+        "duration_ms": 1200,
+        "tokens": { "prompt_tokens": 500, "completion_tokens": 100 },
+        "metadata": [["phase", "plan"]]
+      },
+      {
+        "step_num": 1,
+        "step_type": { "ToolCall": { "tool_name": "search_web", "success": true } },
+        "started_at_ms": 1710000001200,
+        "duration_ms": 800,
+        "tokens": null,
+        "metadata": []
+      },
+      {
+        "step_num": 2,
+        "step_type": { "LlmCall": { "model": "claude-sonnet-4-6", "finish_reason": "end_turn" } },
+        "started_at_ms": 1710000002000,
+        "duration_ms": 900,
+        "tokens": { "prompt_tokens": 800, "completion_tokens": 150 },
+        "metadata": []
+      }
+    ],
+    "status": "Completed",
+    "total_tokens": { "prompt_tokens": 1300, "completion_tokens": 250 },
+    "total_cost_usd": 0.0123,
+    "started_at_ms": 1710000000000,
+    "completed_at_ms": 1710000002900,
+    "parent_trace_id": null
+  },
+  "recovered_with_parent": {
+    "trace_id": "trace_recovered_002",
+    "agent_id": "research-agent",
+    "task_id": 42,
+    "steps": [
+      {
+        "step_num": 0,
+        "step_type": { "Checkpoint": { "iteration": 4 } },
+        "started_at_ms": 1710000100000,
+        "duration_ms": 0,
+        "tokens": null,
+        "metadata": [["recovery", "true"], ["resumed_at_iteration", "4"]]
+      },
+      {
+        "step_num": 1,
+        "step_type": { "LlmCall": { "model": "claude-sonnet-4-6", "finish_reason": "end_turn" } },
+        "started_at_ms": 1710000100050,
+        "duration_ms": 1100,
+        "tokens": { "prompt_tokens": 900, "completion_tokens": 120 },
+        "metadata": []
+      }
+    ],
+    "status": "Completed",
+    "total_tokens": { "prompt_tokens": 900, "completion_tokens": 120 },
+    "total_cost_usd": 0.0,
+    "started_at_ms": 1710000100000,
+    "completed_at_ms": 1710000101150,
+    "parent_trace_id": "trace_normal_001"
+  },
+  "legacy_no_parent_field": {
+    "trace_id": "trace_legacy_003",
+    "agent_id": "summary-agent",
+    "task_id": 7,
+    "steps": [
+      {
+        "step_num": 0,
+        "step_type": { "LlmCall": { "model": "gpt-4o", "finish_reason": "end_turn" } },
+        "started_at_ms": 1709990000000,
+        "duration_ms": 2000,
+        "tokens": { "prompt_tokens": 1000, "completion_tokens": 200 },
+        "metadata": []
+      }
+    ],
+    "status": "Completed",
+    "total_tokens": { "prompt_tokens": 1000, "completion_tokens": 200 },
+    "total_cost_usd": 0.0,
+    "started_at_ms": 1709990000000,
+    "completed_at_ms": 1709990002000
+  }
+}

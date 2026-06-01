@@ -64,6 +64,11 @@ class AgentTrace:
     started_at_ms: int = 0
     completed_at_ms: int | None = None
 
+    # Trace id of the run this trace resumed from after a crash (None for fresh
+    # runs). Mirrors kova-types AgentTrace.parent_trace_id; serde(default) on the
+    # Rust side keeps legacy JSON (without this field) loadable on both sides.
+    parent_trace_id: str | None = None
+
     # v0.2 optional fields
     user_id: str = ""
     session_id: str = ""
@@ -78,6 +83,14 @@ def _parse_step(raw: dict) -> TraceStep:
         started_at_ms=raw.get("started_at_ms", 0),
         duration_ms=raw.get("duration_ms", 0),
     )
+
+    # Extract metadata: Kova serializes Vec<(String, String)> as a JSON array
+    # of two-element arrays, e.g. [["recovery", "true"], ["resumed_at_iteration", "4"]].
+    # Recovery markers live here, so preserving them is what lets Lumen surface
+    # crash-recovered runs.
+    for pair in raw.get("metadata", []):
+        if isinstance(pair, (list, tuple)) and len(pair) == 2:
+            step.metadata.append((str(pair[0]), str(pair[1])))
 
     tokens_raw = raw.get("tokens")
     if tokens_raw is not None:
@@ -115,6 +128,7 @@ def _parse_trace(raw: dict) -> AgentTrace:
         total_cost_usd=raw.get("total_cost_usd", 0.0),
         started_at_ms=raw.get("started_at_ms", 0),
         completed_at_ms=raw.get("completed_at_ms"),
+        parent_trace_id=raw.get("parent_trace_id"),
     )
 
     # v0.2 optional fields

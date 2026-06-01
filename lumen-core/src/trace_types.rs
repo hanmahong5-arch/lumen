@@ -1,6 +1,7 @@
 //! Vendored Agent execution trace types.
 //!
 //! vendored from 2b-svc-kova/kova-types/src/trace.rs (v0.2.0), keep in sync
+//! (last synced 2026-06-01: added `AgentTrace::parent_trace_id`)
 //!
 //! Lumen consumes Kova's `AgentTrace`/`TraceStep`/`TraceStepType`/`TraceStatus`
 //! (and their `TokenUsage` dependency) purely as data read back from trace JSON
@@ -76,6 +77,14 @@ pub struct AgentTrace {
     pub started_at_ms: u64,
     /// Unix epoch milliseconds when the trace completed (None if still running).
     pub completed_at_ms: Option<u64>,
+    /// Trace id of the run this trace resumed from after a crash, if any.
+    ///
+    /// `None` for a fresh run. Set on a crash-recovered run so consumers can
+    /// link "Run B resumed from Run A" into one story instead of showing two
+    /// unrelated traces. `#[serde(default)]` keeps pre-existing trace JSON
+    /// (written before this field existed) readable.
+    #[serde(default)]
+    pub parent_trace_id: Option<String>,
 }
 
 /// A single step within an Agent execution trace.

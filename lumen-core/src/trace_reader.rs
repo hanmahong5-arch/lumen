@@ -50,7 +50,7 @@ pub(crate) fn load_traces(dir: &Path) -> Result<Vec<AgentTrace>, LumenError> {
     }
 
     // Sort newest first
-    traces.sort_by(|a, b| b.started_at_ms.cmp(&a.started_at_ms));
+    traces.sort_by_key(|t| std::cmp::Reverse(t.started_at_ms));
 
     Ok(traces)
 }
