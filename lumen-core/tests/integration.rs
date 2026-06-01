@@ -283,6 +283,101 @@ fn test_cost_report_time_filter() {
     cleanup(&dir);
 }
 
+/// Helper: write a single trace JSON into a fresh temp dir and return the dir.
+fn dir_with_one_trace(name: &str, trace: &serde_json::Value) -> PathBuf {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("lumen_cost_{}_{name}_{id}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let trace_id = trace["trace_id"].as_str().unwrap();
+    std::fs::write(
+        dir.join(format!("{trace_id}.json")),
+        serde_json::to_string_pretty(trace).unwrap(),
+    )
+    .unwrap();
+    dir
+}
+
+#[test]
+fn test_cost_uses_kova_total_verbatim_when_nonzero() {
+    // total_cost_usd is non-zero AND deliberately disagrees with what the
+    // pricing table would estimate from the tokens. Kova's number must win.
+    let trace = serde_json::json!({
+        "trace_id": "trace_realcost",
+        "agent_id": "billed-agent",
+        "task_id": 1,
+        "steps": [
+            {
+                "step_num": 0,
+                "step_type": { "LlmCall": { "model": "claude-opus-4-6", "finish_reason": "end_turn" } },
+                "started_at_ms": 1710000000000_u64,
+                "duration_ms": 1000,
+                // 10k/5k tokens on opus would estimate to (10000*15 + 5000*75)/1000 = $525,
+                // nowhere near the authoritative 0.4242 below.
+                "tokens": { "prompt_tokens": 10000, "completion_tokens": 5000 },
+                "metadata": []
+            }
+        ],
+        "status": "Completed",
+        "total_tokens": { "prompt_tokens": 10000, "completion_tokens": 5000 },
+        "total_cost_usd": 0.4242,
+        "started_at_ms": 1710000000000_u64,
+        "completed_at_ms": 1710000001000_u64
+    });
+    let dir = dir_with_one_trace("verbatim", &trace);
+
+    let report = CostTracker::new(&dir).report(0).unwrap();
+    assert_eq!(report.total_runs, 1);
+    // Used verbatim — NOT the ~$525 token estimate.
+    assert!(
+        (report.total_usd - 0.4242).abs() < 1e-9,
+        "expected verbatim 0.4242, got {}",
+        report.total_usd
+    );
+    assert!((report.by_agent["billed-agent"] - 0.4242).abs() < 1e-9);
+
+    cleanup(&dir);
+}
+
+#[test]
+fn test_cost_falls_back_to_estimate_when_total_is_zero() {
+    // Legacy trace: total_cost_usd == 0.0 → estimate from per-step tokens.
+    let trace = serde_json::json!({
+        "trace_id": "trace_legacy_cost",
+        "agent_id": "legacy-agent",
+        "task_id": 2,
+        "steps": [
+            {
+                "step_num": 0,
+                "step_type": { "LlmCall": { "model": "gpt-4o", "finish_reason": "end_turn" } },
+                "started_at_ms": 1710000000000_u64,
+                "duration_ms": 1000,
+                "tokens": { "prompt_tokens": 1000, "completion_tokens": 500 },
+                "metadata": []
+            }
+        ],
+        "status": "Completed",
+        "total_tokens": { "prompt_tokens": 1000, "completion_tokens": 500 },
+        "total_cost_usd": 0.0,
+        "started_at_ms": 1710000000000_u64,
+        "completed_at_ms": 1710000001000_u64
+    });
+    let dir = dir_with_one_trace("estimate", &trace);
+
+    let report = CostTracker::new(&dir).report(0).unwrap();
+    assert_eq!(report.total_runs, 1);
+    // gpt-4o = $2.50/$10.00 per 1k → (1000*2.5 + 500*10)/1000 = 2.5 + 5.0 = $7.50
+    let expected = (1000.0 * 2.50 + 500.0 * 10.0) / 1000.0;
+    assert!(
+        (report.total_usd - expected).abs() < 1e-9,
+        "expected estimate {expected}, got {}",
+        report.total_usd
+    );
+    assert!(report.total_usd > 0.0, "fallback must produce a non-zero estimate");
+
+    cleanup(&dir);
+}
+
 #[test]
 fn test_empty_directory() {
     let dir = std::env::temp_dir().join(format!("lumen_empty_{}", std::process::id()));
