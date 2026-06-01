@@ -53,7 +53,7 @@ enum Commands {
     },
     /// Pull traces from a running Kova into a local trace directory.
     ///
-    /// Lists traces via `GET /api/v1/traces`, fetches each via
+    /// Lists traces via `GET /api/v1/traces?limit=N`, fetches each via
     /// `GET /api/v1/traces/{id}`, and writes `{trace-dir}/{id}.json` so the
     /// replay/cost/traces commands then work against pulled data.
     Pull {
@@ -66,6 +66,9 @@ enum Commands {
         /// Directory to write pulled trace JSON files into.
         #[arg(long, default_value = "./traces", alias = "wal-dir")]
         trace_dir: String,
+        /// Maximum number of traces to fetch (default 200, max 10000).
+        #[arg(long, default_value_t = pull::DEFAULT_PULL_LIMIT)]
+        limit: usize,
     },
 }
 
@@ -88,7 +91,8 @@ fn main() -> std::process::ExitCode {
             kova_url,
             api_key,
             trace_dir,
-        } => return cmd_pull(&kova_url, api_key, &trace_dir),
+            limit,
+        } => return cmd_pull(&kova_url, api_key, &trace_dir, limit),
     }
     std::process::ExitCode::SUCCESS
 }
@@ -102,13 +106,19 @@ fn resolve_api_key(explicit: Option<String>) -> Option<String> {
         .filter(|k| !k.is_empty())
 }
 
-fn cmd_pull(kova_url: &str, api_key: Option<String>, trace_dir: &str) -> std::process::ExitCode {
+fn cmd_pull(
+    kova_url: &str,
+    api_key: Option<String>,
+    trace_dir: &str,
+    limit: usize,
+) -> std::process::ExitCode {
+    let limit = limit.min(pull::MAX_PULL_LIMIT);
     let key = resolve_api_key(api_key);
     let fetcher = pull::HttpFetcher::new(kova_url, key);
     let dir = std::path::Path::new(trace_dir);
 
-    println!("\x1b[36m⇣ Pulling traces from {kova_url}\x1b[0m");
-    match pull::pull_into(&fetcher, dir) {
+    println!("\x1b[36m⇣ Pulling up to {limit} traces from {kova_url}\x1b[0m");
+    match pull::pull_into(&fetcher, dir, limit) {
         Ok(summary) => {
             if summary.listed == 0 {
                 println!("  No traces on the server. Nothing to pull.");

@@ -45,17 +45,23 @@ pub struct PullSummary {
     pub skipped: Vec<String>,
 }
 
+/// Default limit for `lumen pull --limit` (number of traces to fetch).
+pub const DEFAULT_PULL_LIMIT: usize = 200;
+/// Maximum value accepted for `--limit`.
+pub const MAX_PULL_LIMIT: usize = 10_000;
+
 /// Abstraction over fetching traces from Kova — the single network seam.
 ///
 /// Implemented by [`HttpFetcher`] in production and by stubs in tests so the
 /// orchestration logic can be exercised without a real server.
 pub trait TraceFetcher {
-    /// List all trace ids known to Kova. A failure here aborts the whole pull.
+    /// List up to `limit` trace ids known to Kova. A failure here aborts the
+    /// whole pull.
     ///
     /// # Errors
     /// Returns a message when the server is unreachable or the response is
     /// not a parseable trace list.
-    fn list_trace_ids(&self) -> Result<Vec<String>, String>;
+    fn list_trace_ids(&self, limit: usize) -> Result<Vec<String>, String>;
 
     /// Fetch one full trace as raw JSON bytes. A failure here is non-fatal:
     /// the caller skips this id and continues.
@@ -105,7 +111,8 @@ fn validate_trace_body(trace_id: &str, body: &[u8]) -> Result<(), String> {
     }
 }
 
-/// Orchestrate a pull: list ids, fetch each, write `{trace_dir}/{id}.json`.
+/// Orchestrate a pull: list ids (up to `limit`), fetch each, write
+/// `{trace_dir}/{id}.json`. Prints per-trace progress to stdout.
 ///
 /// Behavior:
 /// - List failure → [`PullError::List`] (whole pull aborts, non-zero exit).
@@ -122,8 +129,9 @@ fn validate_trace_body(trace_id: &str, body: &[u8]) -> Result<(), String> {
 pub fn pull_into(
     fetcher: &dyn TraceFetcher,
     trace_dir: &Path,
+    limit: usize,
 ) -> Result<PullSummary, PullError> {
-    let ids = fetcher.list_trace_ids().map_err(PullError::List)?;
+    let ids = fetcher.list_trace_ids(limit).map_err(PullError::List)?;
 
     let mut summary = PullSummary {
         listed: ids.len(),
@@ -137,7 +145,9 @@ pub fn pull_into(
     std::fs::create_dir_all(trace_dir)
         .map_err(|e| PullError::Io(format!("create {}: {e}", trace_dir.display())))?;
 
-    for id in ids {
+    let total = ids.len();
+    for (idx, id) in ids.into_iter().enumerate() {
+        eprintln!("  [{}/{}] {}", idx + 1, total, id);
         match fetch_and_write_one(fetcher, trace_dir, &id) {
             Ok(()) => summary.written += 1,
             Err(msg) => {
@@ -218,8 +228,8 @@ impl HttpFetcher {
 }
 
 impl TraceFetcher for HttpFetcher {
-    fn list_trace_ids(&self) -> Result<Vec<String>, String> {
-        let url = format!("{}/api/v1/traces", self.base_url);
+    fn list_trace_ids(&self, limit: usize) -> Result<Vec<String>, String> {
+        let url = format!("{}/api/v1/traces?limit={limit}", self.base_url);
         let body = self.get(&url)?;
         extract_trace_ids(&body)
     }
@@ -252,11 +262,13 @@ mod tests {
     use std::collections::HashMap;
 
     /// In-memory stub fetcher — no network. Records calls so tests can assert
-    /// which traces were requested.
+    /// which traces were requested and what limit was passed.
     struct StubFetcher {
         list: Result<Vec<String>, String>,
         traces: HashMap<String, Result<Vec<u8>, String>>,
         fetched: RefCell<Vec<String>>,
+        /// Last `limit` value passed to `list_trace_ids`.
+        last_limit: RefCell<usize>,
     }
 
     impl StubFetcher {
@@ -265,6 +277,7 @@ mod tests {
                 list: Ok(ids.iter().map(|s| (*s).to_string()).collect()),
                 traces: HashMap::new(),
                 fetched: RefCell::new(Vec::new()),
+                last_limit: RefCell::new(0),
             }
         }
 
@@ -281,7 +294,8 @@ mod tests {
     }
 
     impl TraceFetcher for StubFetcher {
-        fn list_trace_ids(&self) -> Result<Vec<String>, String> {
+        fn list_trace_ids(&self, limit: usize) -> Result<Vec<String>, String> {
+            *self.last_limit.borrow_mut() = limit;
             self.list.clone()
         }
 
@@ -333,7 +347,7 @@ mod tests {
             .with_trace("t1", &trace_json("t1"))
             .with_trace("t2", &trace_json("t2"));
 
-        let summary = pull_into(&fetcher, &dir).unwrap();
+        let summary = pull_into(&fetcher, &dir, DEFAULT_PULL_LIMIT).unwrap();
         assert_eq!(summary.listed, 2);
         assert_eq!(summary.written, 2);
         assert!(summary.skipped.is_empty());
@@ -353,7 +367,7 @@ mod tests {
     fn pull_empty_list_is_noop() {
         let dir = tmp_dir("empty");
         let fetcher = StubFetcher::new(&[]);
-        let summary = pull_into(&fetcher, &dir).unwrap();
+        let summary = pull_into(&fetcher, &dir, DEFAULT_PULL_LIMIT).unwrap();
         assert_eq!(summary, PullSummary::default());
         // No directory side effects required for an empty list.
         let _ = std::fs::remove_dir_all(&dir);
@@ -367,7 +381,7 @@ mod tests {
             .with_fetch_error("bad", "HTTP 500")
             .with_trace("good2", &trace_json("good2"));
 
-        let summary = pull_into(&fetcher, &dir).unwrap();
+        let summary = pull_into(&fetcher, &dir, DEFAULT_PULL_LIMIT).unwrap();
         assert_eq!(summary.listed, 3);
         assert_eq!(summary.written, 2);
         assert_eq!(summary.skipped, vec!["bad".to_string()]);
@@ -384,7 +398,7 @@ mod tests {
         let dir = tmp_dir("mismatch");
         // Server returns a trace whose id doesn't match what we asked for.
         let fetcher = StubFetcher::new(&["want"]).with_trace("want", &trace_json("other"));
-        let summary = pull_into(&fetcher, &dir).unwrap();
+        let summary = pull_into(&fetcher, &dir, DEFAULT_PULL_LIMIT).unwrap();
         assert_eq!(summary.written, 0);
         assert_eq!(summary.skipped, vec!["want".to_string()]);
         assert!(!dir.join("want.json").exists());
@@ -398,9 +412,24 @@ mod tests {
             list: Err("connection refused".to_string()),
             traces: HashMap::new(),
             fetched: RefCell::new(Vec::new()),
+            last_limit: RefCell::new(0),
         };
-        let err = pull_into(&fetcher, &dir).unwrap_err();
+        let err = pull_into(&fetcher, &dir, DEFAULT_PULL_LIMIT).unwrap_err();
         assert!(matches!(err, PullError::List(_)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pull_limit_is_forwarded_to_fetcher() {
+        // The limit value passed to pull_into must reach list_trace_ids.
+        let dir = tmp_dir("limit");
+        let fetcher = StubFetcher::new(&[]);
+        pull_into(&fetcher, &dir, 42).unwrap();
+        assert_eq!(*fetcher.last_limit.borrow(), 42, "limit must be forwarded");
+
+        // Default and max constants are sane.
+        assert_eq!(DEFAULT_PULL_LIMIT, 200);
+        assert_eq!(MAX_PULL_LIMIT, 10_000);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
