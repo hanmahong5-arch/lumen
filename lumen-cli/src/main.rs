@@ -142,9 +142,22 @@ fn cmd_replay(trace_id: &str, trace_dir: &str, from_step: Option<u32>) {
         Ok(trace) => {
             let start = from_step.unwrap_or(1);
             println!(
-                "\x1b[36m🔄 Replaying trace {} ({} iterations, ${:.2} original cost)\x1b[0m\n",
+                "\x1b[36m🔄 Replaying trace {} ({} iterations, ${:.2} original cost)\x1b[0m",
                 trace.trace_id, trace.total_iterations, trace.original_cost_usd
             );
+            if let Some(ref r) = trace.recovery {
+                match r.resumed_at_iteration {
+                    Some(n) => println!(
+                        "\x1b[35m⟳ resumed from {} at iteration {n}\x1b[0m",
+                        r.parent_trace_id
+                    ),
+                    None => println!(
+                        "\x1b[35m⟳ resumed from {}\x1b[0m",
+                        r.parent_trace_id
+                    ),
+                }
+            }
+            println!();
             for step in &trace.steps {
                 if step.step < start {
                     continue;

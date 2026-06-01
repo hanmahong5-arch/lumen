@@ -54,6 +54,20 @@ pub struct ReplayToolCall {
     pub output_preview: String,
 }
 
+/// Crash-recovery provenance for a replayed run.
+///
+/// Present only when this run was resumed from a crashed predecessor (Kova
+/// sets `parent_trace_id` and emits a recovery-marker Checkpoint as the first
+/// step). Lets Lumen surface Kova's durability story: "resumed from X at N".
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RecoveryInfo {
+    /// Trace id of the crashed run this one resumed from.
+    pub parent_trace_id: String,
+    /// Iteration the run resumed at, from the recovery Checkpoint metadata
+    /// (`resumed_at_iteration`). `None` if the marker was absent/unparseable.
+    pub resumed_at_iteration: Option<u32>,
+}
+
 /// Full replay of an agent run.
 #[derive(Debug, serde::Serialize)]
 pub struct ReplayTrace {
@@ -71,6 +85,8 @@ pub struct ReplayTrace {
     pub success: bool,
     /// Total duration in milliseconds.
     pub total_duration_ms: u64,
+    /// Crash-recovery provenance, if this run resumed from a crashed one.
+    pub recovery: Option<RecoveryInfo>,
 }
 
 /// Replay engine that reads trace JSON files to reconstruct agent runs.
@@ -121,6 +137,7 @@ impl ReplayEngine {
                 .count() as u32,
             success,
             total_duration_ms,
+            recovery: extract_recovery(trace),
         })
     }
 
@@ -133,6 +150,29 @@ impl ReplayEngine {
         let traces = crate::trace_reader::load_traces(&self.trace_dir)?;
         Ok(traces.into_iter().map(|t| t.trace_id).collect())
     }
+}
+
+/// Extract crash-recovery provenance from a trace.
+///
+/// Recovery is signalled by `parent_trace_id` being set. The `resumed_at_iteration`
+/// is read from the first step's recovery-marker metadata
+/// (`[("recovery","true"),("resumed_at_iteration","N")]`) when present.
+fn extract_recovery(trace: &AgentTrace) -> Option<RecoveryInfo> {
+    let parent_trace_id = trace.parent_trace_id.clone()?;
+    let resumed_at_iteration = trace
+        .steps
+        .first()
+        .and_then(|s| {
+            s.metadata
+                .iter()
+                .find(|(k, _)| k == "resumed_at_iteration")
+                .map(|(_, v)| v)
+        })
+        .and_then(|v| v.parse::<u32>().ok());
+    Some(RecoveryInfo {
+        parent_trace_id,
+        resumed_at_iteration,
+    })
 }
 
 /// Build replay steps by grouping LLM calls with their subsequent tool calls.

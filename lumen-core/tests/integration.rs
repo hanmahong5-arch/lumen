@@ -299,6 +299,54 @@ fn dir_with_one_trace(name: &str, trace: &serde_json::Value) -> PathBuf {
 }
 
 #[test]
+fn test_replay_surfaces_recovery_marker() {
+    // A crash-recovered run: parent_trace_id set + recovery-marker Checkpoint.
+    let trace = serde_json::json!({
+        "trace_id": "trace_resumed",
+        "agent_id": "durable-agent",
+        "task_id": 5,
+        "steps": [
+            {
+                "step_num": 0,
+                "step_type": { "Checkpoint": { "iteration": 4 } },
+                "started_at_ms": 1710000000000_u64,
+                "duration_ms": 0,
+                "tokens": null,
+                "metadata": [["recovery", "true"], ["resumed_at_iteration", "4"]]
+            },
+            {
+                "step_num": 1,
+                "step_type": { "LlmCall": { "model": "gpt-4o", "finish_reason": "end_turn" } },
+                "started_at_ms": 1710000000050_u64,
+                "duration_ms": 1100,
+                "tokens": { "prompt_tokens": 900, "completion_tokens": 120 },
+                "metadata": []
+            }
+        ],
+        "status": "Completed",
+        "total_tokens": { "prompt_tokens": 900, "completion_tokens": 120 },
+        "total_cost_usd": 0.05,
+        "started_at_ms": 1710000000000_u64,
+        "completed_at_ms": 1710000001150_u64,
+        "parent_trace_id": "trace_original"
+    });
+    let dir = dir_with_one_trace("recovery", &trace);
+
+    let replay = ReplayEngine::new(&dir).replay("trace_resumed").unwrap();
+    let recovery = replay.recovery.expect("recovered run should carry recovery info");
+    assert_eq!(recovery.parent_trace_id, "trace_original");
+    assert_eq!(recovery.resumed_at_iteration, Some(4));
+
+    // A fresh run (no parent_trace_id) carries no recovery info.
+    let fresh_dir = setup_trace_dir();
+    let fresh = ReplayEngine::new(&fresh_dir).replay("trace_abc123").unwrap();
+    assert!(fresh.recovery.is_none());
+
+    cleanup(&fresh_dir);
+    cleanup(&dir);
+}
+
+#[test]
 fn test_cost_uses_kova_total_verbatim_when_nonzero() {
     // total_cost_usd is non-zero AND deliberately disagrees with what the
     // pricing table would estimate from the tokens. Kova's number must win.
