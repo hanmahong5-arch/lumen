@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::trace_types::{TraceStatus, TraceStepType};
+use crate::trace_types::{AgentTrace, TraceStatus, TraceStepType};
 
 use crate::LumenError;
 
@@ -82,6 +82,19 @@ impl TraceStore {
                 }
             })
             .collect())
+    }
+
+    /// Load the full [`AgentTrace`] records, newest first.
+    ///
+    /// Unlike [`Self::list`] (which projects each run to a flat summary), this
+    /// returns the complete per-step timeline. The dashboard uses it to render
+    /// a Temporal-style timeline of every LLM call, tool call and checkpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns `LumenError::Io` if the trace directory cannot be read.
+    pub fn load_full(&self) -> Result<Vec<AgentTrace>, LumenError> {
+        crate::trace_reader::load_traces(&self.trace_dir)
     }
 
     /// Get the trace directory path.

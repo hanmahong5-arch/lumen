@@ -1,5 +1,8 @@
 //! Lumen CLI — illuminate your AI agents.
 
+mod dashboard;
+mod kova;
+mod netdata;
 mod pull;
 
 use clap::{Parser, Subcommand};
@@ -45,11 +48,43 @@ enum Commands {
         #[arg(long, default_value = "20")]
         limit: usize,
     },
-    /// Open the web dashboard.
+    /// Open the web dashboard — a Temporal-style timeline of every agent run,
+    /// plus a Netdata-backed Metrics tab (metrics + ML anomaly + alarms).
     Dashboard {
         /// Port to serve on.
         #[arg(long, default_value = "9700")]
         port: u16,
+        /// Trace directory to visualize.
+        #[arg(long, default_value = "./traces", alias = "wal-dir")]
+        trace_dir: String,
+        /// Netdata base URL for the Metrics tab (e.g. http://localhost:19999).
+        /// Falls back to LUMEN_NETDATA_URL. Unset ⇒ Metrics tab shows a config card.
+        #[arg(long)]
+        netdata_url: Option<String>,
+        /// Kova base URL for the Terminal tab (e.g. http://localhost:3010).
+        /// Falls back to LUMEN_KOVA_URL. Unset ⇒ Terminal tab shows a config card.
+        #[arg(long)]
+        kova_url: Option<String>,
+        /// Kova API key for the Terminal tab (`X-API-Key`), held server-side.
+        /// Falls back to LUMEN_KOVA_API_KEY then KOVA_API_KEY.
+        #[arg(long)]
+        api_key: Option<String>,
+    },
+    /// Snapshot kova metrics + ML anomaly rates from Netdata (headless).
+    ///
+    /// Proxies Netdata `/api/v1/data` for the fixed kova chart set and prints
+    /// the latest per-tester values alongside each chart's ML anomaly rate —
+    /// useful for stress-campaign anomaly snapshotting without the dashboard.
+    Metrics {
+        /// Netdata base URL (e.g. http://localhost:19999). Falls back to LUMEN_NETDATA_URL.
+        #[arg(long)]
+        netdata_url: Option<String>,
+        /// Relative time window (e.g. "10m", "1h", "24h").
+        #[arg(long, default_value = "10m")]
+        last: String,
+        /// Output format (text or json).
+        #[arg(long, default_value = "text")]
+        format: String,
     },
     /// Pull traces from a running Kova into a local trace directory.
     ///
@@ -70,6 +105,25 @@ enum Commands {
         #[arg(long, default_value_t = pull::DEFAULT_PULL_LIMIT)]
         limit: usize,
     },
+    /// Run a single Kova control command (headless console).
+    ///
+    /// Parses one whitelisted verb (same set as the dashboard's Terminal tab),
+    /// sends it to a running Kova, and prints the result. e.g.
+    /// `lumen kova "agents"` or `lumen kova "agent foo run hello"`.
+    Kova {
+        /// The command line, e.g. "agents" or "agent foo run hello world".
+        command: String,
+        /// Base URL of the running Kova (e.g. http://localhost:3010).
+        /// Falls back to LUMEN_KOVA_URL.
+        #[arg(long)]
+        kova_url: Option<String>,
+        /// API key (`X-API-Key`). Falls back to LUMEN_KOVA_API_KEY then KOVA_API_KEY.
+        #[arg(long)]
+        api_key: Option<String>,
+        /// Confirm destructive verbs (reset/terminate/delete) non-interactively.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 fn main() -> std::process::ExitCode {
@@ -86,15 +140,43 @@ fn main() -> std::process::ExitCode {
             format,
         } => cmd_cost(&last, &trace_dir, &format),
         Commands::Traces { trace_dir, limit } => cmd_traces(&trace_dir, limit),
-        Commands::Dashboard { port } => cmd_dashboard(port),
+        Commands::Dashboard {
+            port,
+            trace_dir,
+            netdata_url,
+            kova_url,
+            api_key,
+        } => {
+            let kova = resolve_kova_url(kova_url).map(|u| (u, resolve_api_key(api_key)));
+            dashboard::serve(port, &trace_dir, resolve_netdata_url(netdata_url), kova);
+        }
+        Commands::Metrics {
+            netdata_url,
+            last,
+            format,
+        } => return cmd_metrics(resolve_netdata_url(netdata_url), &last, &format),
         Commands::Pull {
             kova_url,
             api_key,
             trace_dir,
             limit,
         } => return cmd_pull(&kova_url, api_key, &trace_dir, limit),
+        Commands::Kova {
+            command,
+            kova_url,
+            api_key,
+            yes,
+        } => return cmd_kova(kova_url, api_key, &command, yes),
     }
     std::process::ExitCode::SUCCESS
+}
+
+/// Resolve the Netdata base URL: explicit `--netdata-url` wins, then
+/// `LUMEN_NETDATA_URL`. `None` ⇒ Netdata features are disabled.
+fn resolve_netdata_url(explicit: Option<String>) -> Option<String> {
+    explicit
+        .or_else(|| std::env::var("LUMEN_NETDATA_URL").ok())
+        .filter(|u| !u.is_empty())
 }
 
 /// Resolve the API key: explicit `--api-key` wins, then `LUMEN_KOVA_API_KEY`,
@@ -104,6 +186,47 @@ fn resolve_api_key(explicit: Option<String>) -> Option<String> {
         .or_else(|| std::env::var("LUMEN_KOVA_API_KEY").ok())
         .or_else(|| std::env::var("KOVA_API_KEY").ok())
         .filter(|k| !k.is_empty())
+}
+
+/// Resolve the Kova base URL: explicit `--kova-url` wins, then `LUMEN_KOVA_URL`.
+/// `None` ⇒ the Terminal tab / `lumen kova` are disabled.
+fn resolve_kova_url(explicit: Option<String>) -> Option<String> {
+    explicit
+        .or_else(|| std::env::var("LUMEN_KOVA_URL").ok())
+        .filter(|u| !u.is_empty())
+}
+
+/// `lumen kova "<command>"` — one-shot headless console. Parses one whitelisted
+/// verb, sends it to Kova, prints the result. Destructive verbs require `--yes`.
+fn cmd_kova(
+    kova_url: Option<String>,
+    api_key: Option<String>,
+    command: &str,
+    yes: bool,
+) -> std::process::ExitCode {
+    let Some(url) = resolve_kova_url(kova_url) else {
+        eprintln!(
+            "\x1b[31mError: no Kova URL.\x1b[0m set --kova-url or LUMEN_KOVA_URL \
+             (e.g. http://localhost:3010)"
+        );
+        return std::process::ExitCode::FAILURE;
+    };
+    let client = kova::HttpKovaClient::new(&url, resolve_api_key(api_key));
+    match kova::run_line(&client, command, yes) {
+        kova::ConsoleOutcome::Output(text) => {
+            println!("{text}");
+            std::process::ExitCode::SUCCESS
+        }
+        kova::ConsoleOutcome::Confirm(text) => {
+            eprintln!("\x1b[33m{text}\x1b[0m");
+            eprintln!("  (re-run with --yes to confirm)");
+            std::process::ExitCode::FAILURE
+        }
+        kova::ConsoleOutcome::Error(text) => {
+            eprintln!("\x1b[31mError: {text}\x1b[0m");
+            std::process::ExitCode::FAILURE
+        }
+    }
 }
 
 fn cmd_pull(
@@ -146,6 +269,134 @@ fn cmd_pull(
     }
 }
 
+/// Points requested per chart for the headless metrics snapshot.
+const METRICS_POINTS: u32 = 60;
+
+fn cmd_metrics(netdata_url: Option<String>, last: &str, format: &str) -> std::process::ExitCode {
+    let Some(url) = netdata_url else {
+        eprintln!(
+            "\x1b[31mError: no Netdata URL.\x1b[0m set --netdata-url or LUMEN_NETDATA_URL \
+             (e.g. http://localhost:19999)"
+        );
+        return std::process::ExitCode::FAILURE;
+    };
+    let client = netdata::HttpNetdataClient::new(&url);
+    let after = parse_relative_secs(last);
+    let snapshot = metrics_snapshot(&client, after, METRICS_POINTS);
+
+    if format == "json" {
+        if let Ok(json) = serde_json::to_string_pretty(&snapshot) {
+            println!("{json}");
+        }
+    } else {
+        print_metrics_snapshot(&snapshot, &url, last);
+    }
+    std::process::ExitCode::SUCCESS
+}
+
+/// Collect a metrics + ML-anomaly snapshot for the fixed kova chart set into a
+/// JSON value. Per-chart failures are recorded as `{ "error": … }` so a missing
+/// chart (e.g. the planned cost metric) never sinks the whole snapshot.
+fn metrics_snapshot(
+    client: &dyn netdata::NetdataClient,
+    after: i64,
+    points: u32,
+) -> serde_json::Value {
+    use serde_json::json;
+
+    // Headless snapshot always uses an up-to-now window (before = 0).
+    const NOW: i64 = 0;
+    let mut charts = serde_json::Map::new();
+    for &chart in netdata::KOVA_CHARTS {
+        let entry = match client.query_data(chart, after, NOW, points) {
+            Ok(body) => {
+                let dims: serde_json::Map<String, serde_json::Value> =
+                    netdata::latest_dimensions(&body)
+                        .into_iter()
+                        .map(|(k, v)| (k, json!(v)))
+                        .collect();
+                let anomaly = client
+                    .anomaly_rate(chart, after, NOW, points)
+                    .ok()
+                    .as_ref()
+                    .and_then(netdata::anomaly_rate_from_data);
+                json!({ "dimensions": dims, "anomaly_rate": anomaly })
+            }
+            Err(e) => json!({ "error": e }),
+        };
+        charts.insert(chart.to_string(), entry);
+    }
+    let node = client
+        .anomaly_rate(netdata::NODE_ANOMALY_CHART, after, NOW, points)
+        .ok()
+        .as_ref()
+        .and_then(netdata::anomaly_rate_from_data);
+    json!({ "node_anomaly_rate": node, "charts": charts })
+}
+
+fn print_metrics_snapshot(snapshot: &serde_json::Value, url: &str, window: &str) {
+    println!("\x1b[36m📈 Kova Metrics via Netdata (last {window})\x1b[0m");
+    println!("  source: {url}");
+    match snapshot
+        .get("node_anomaly_rate")
+        .and_then(serde_json::Value::as_f64)
+    {
+        Some(rate) => println!("  \x1b[1mfleet ML anomaly rate: {rate:.1}%\x1b[0m\n"),
+        None => println!("  fleet ML anomaly rate: n/a (node anomaly chart unavailable)\n"),
+    }
+
+    let Some(charts) = snapshot
+        .get("charts")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return;
+    };
+    for (chart, entry) in charts {
+        let short = chart.strip_prefix("prometheus.").unwrap_or(chart);
+        if let Some(err) = entry.get("error").and_then(serde_json::Value::as_str) {
+            println!("  {short:38} \x1b[33m(no data: {err})\x1b[0m");
+            continue;
+        }
+        let anomaly = entry
+            .get("anomaly_rate")
+            .and_then(serde_json::Value::as_f64)
+            .map_or_else(|| "—".to_string(), |a| format!("{a:.1}% anomaly"));
+        println!("  \x1b[1m{short}\x1b[0m  ({anomaly})");
+        match entry
+            .get("dimensions")
+            .and_then(serde_json::Value::as_object)
+        {
+            Some(dims) if !dims.is_empty() => {
+                for (dim, val) in dims {
+                    let v = val.as_f64().unwrap_or(0.0);
+                    println!("      {dim:30} {v}");
+                }
+            }
+            _ => println!("      (no current samples)"),
+        }
+    }
+}
+
+/// Parse a relative time window (e.g. "10m", "1h", "24h", "7d", "30s") into a
+/// negative seconds offset for Netdata's relative `after` param. Falls back to
+/// 10 minutes on an unrecognized value.
+fn parse_relative_secs(s: &str) -> i64 {
+    let s = s.trim();
+    let neg = |body: &str, mult: i64| body.parse::<i64>().ok().map(|n| -(n.saturating_mul(mult)));
+    let parsed = if let Some(b) = s.strip_suffix('s') {
+        neg(b, 1)
+    } else if let Some(b) = s.strip_suffix('m') {
+        neg(b, 60)
+    } else if let Some(b) = s.strip_suffix('h') {
+        neg(b, 3_600)
+    } else if let Some(b) = s.strip_suffix('d') {
+        neg(b, 86_400)
+    } else {
+        None
+    };
+    parsed.unwrap_or(-600)
+}
+
 fn cmd_replay(trace_id: &str, trace_dir: &str, from_step: Option<u32>) {
     let engine = lumen_core::replay::ReplayEngine::new(trace_dir);
     match engine.replay(trace_id) {
@@ -161,10 +412,7 @@ fn cmd_replay(trace_id: &str, trace_dir: &str, from_step: Option<u32>) {
                         "\x1b[35m⟳ resumed from {} at iteration {n}\x1b[0m",
                         r.parent_trace_id
                     ),
-                    None => println!(
-                        "\x1b[35m⟳ resumed from {}\x1b[0m",
-                        r.parent_trace_id
-                    ),
+                    None => println!("\x1b[35m⟳ resumed from {}\x1b[0m", r.parent_trace_id),
                 }
             }
             println!();
@@ -299,12 +547,6 @@ fn cmd_traces(trace_dir: &str, limit: usize) {
             eprintln!("\x1b[31mError: {e}\x1b[0m");
         }
     }
-}
-
-fn cmd_dashboard(port: u16) {
-    println!("\x1b[36m🌐 Lumen Dashboard\x1b[0m");
-    println!("  http://localhost:{port}");
-    println!("  (coming soon)");
 }
 
 #[allow(clippy::cast_possible_truncation)]

@@ -16,4 +16,5 @@ pub mod trace_types;
 
 mod trace_reader;
 
+pub use cost::{COST_ANOMALY_MIN_USD, COST_ANOMALY_MULTIPLIER};
 pub use error::LumenError;

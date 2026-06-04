@@ -1,0 +1,709 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lumen — Agent Observability</title>
+<style>
+  :root {
+    --bg: #0a0c12; --bg2: #0d1018; --panel: #12161f; --panel2: #171c28; --border: #1f2533;
+    --border2: #2a3145; --text: #d3dbe8; --muted: #6b7689; --muted2: #4a5266;
+    --accent: #5b9dff; --accent2: #a855f7;
+    --llm: #3b82f6; --tool: #8b5cf6; --ckpt: #64748b; --err: #ef4444;
+    --ok: #22c55e; --warn: #f59e0b; --recover: #a855f7; --cyan: #22d3ee;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: radial-gradient(1200px 600px at 80% -10%, #131a2e 0%, var(--bg) 55%);
+    color: var(--text); font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .grad { background: linear-gradient(90deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+  header { display: flex; align-items: center; gap: 18px; padding: 13px 22px; border-bottom: 1px solid var(--border); background: rgba(13,16,24,.7); backdrop-filter: blur(8px); position: sticky; top: 0; z-index: 30; }
+  .brand { font-weight: 800; font-size: 17px; letter-spacing: .2px; }
+  .tag { color: var(--muted); font-size: 12px; }
+  nav.tabs { display: flex; gap: 4px; margin-left: 8px; }
+  nav.tabs button { background: none; border: none; color: var(--muted); font: inherit; font-weight: 600; padding: 6px 13px; border-radius: 8px; cursor: pointer; }
+  nav.tabs button:hover { color: var(--text); background: var(--panel); }
+  nav.tabs button.on { color: #fff; background: linear-gradient(90deg, rgba(91,157,255,.18), rgba(168,85,247,.18)); box-shadow: inset 0 0 0 1px var(--border2); }
+  .hstats { margin-left: auto; display: flex; gap: 22px; align-items: center; }
+  .hstat .v { font-weight: 800; font-size: 15px; } .hstat .k { color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .5px; }
+  .live { display: flex; align-items: center; gap: 7px; color: var(--muted); cursor: pointer; user-select: none; font-size: 12px; }
+  .live .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); animation: pulse 2s infinite; }
+  .live.off .pulse { background: var(--muted2); animation: none; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(34,197,94,.5);} 70% { box-shadow: 0 0 0 7px rgba(34,197,94,0);} 100% { box-shadow: 0 0 0 0 rgba(34,197,94,0);} }
+
+  .wrap { padding: 22px 26px; max-width: 1500px; margin: 0 auto; }
+
+  /* KPI cards */
+  .kpis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 13px; margin-bottom: 20px; }
+  .kpi { background: linear-gradient(180deg, var(--panel), var(--bg2)); border: 1px solid var(--border); border-radius: 13px; padding: 14px 16px; position: relative; overflow: hidden; }
+  .kpi::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 2px; background: linear-gradient(90deg, var(--accent), var(--accent2)); opacity: .7; }
+  .kpi .k { color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .5px; }
+  .kpi .v { font-weight: 800; font-size: 24px; margin-top: 5px; letter-spacing: -.5px; }
+  .kpi .d { color: var(--muted); font-size: 11px; margin-top: 2px; }
+
+  /* chart grid */
+  .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 15px; }
+  .col-4 { grid-column: span 4; } .col-6 { grid-column: span 6; } .col-8 { grid-column: span 8; } .col-12 { grid-column: span 12; }
+  .panel { background: linear-gradient(180deg, var(--panel), var(--bg2)); border: 1px solid var(--border); border-radius: 13px; padding: 16px 18px; }
+  .panel h3 { margin: 0 0 14px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  .panel h3 .hint { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--muted2); margin-left: auto; }
+
+  /* horizontal bars */
+  .bars { display: flex; flex-direction: column; gap: 10px; }
+  .bar-row { display: grid; grid-template-columns: 130px 1fr 64px; gap: 10px; align-items: center; }
+  .bar-row .bl { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+  .bar-track { background: var(--bg); border-radius: 6px; height: 22px; position: relative; overflow: hidden; box-shadow: inset 0 0 0 1px var(--border); }
+  .bar-fill { height: 100%; border-radius: 6px; min-width: 2px; }
+  .bar-fill.stack { display: flex; }
+  .bar-fill.stack span { height: 100%; }
+  .bar-val { color: var(--muted); font-size: 11.5px; text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* donut */
+  .donut-wrap { display: flex; align-items: center; gap: 18px; }
+  .donut-c { position: relative; flex: none; }
+  .donut-c .center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .donut-c .center .n { font-weight: 800; font-size: 19px; } .donut-c .center .l { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .5px; }
+  .legend { display: flex; flex-direction: column; gap: 7px; }
+  .legend .lg { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .legend .sw { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+  .legend .lv { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  /* traces view */
+  .tview { display: grid; grid-template-columns: 310px 1fr; gap: 16px; }
+  .sidebar { background: var(--panel); border: 1px solid var(--border); border-radius: 13px; overflow: hidden; align-self: start; }
+  .sb-head { padding: 11px 15px; color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .6px; border-bottom: 1px solid var(--border); display: flex; align-items: center; }
+  .sb-head input { margin-left: auto; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 7px; padding: 4px 9px; font: inherit; font-size: 12px; width: 120px; }
+  .trace-item { padding: 11px 15px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .trace-item:last-child { border-bottom: none; }
+  .trace-item:hover { background: var(--panel2); }
+  .trace-item.sel { background: var(--panel2); box-shadow: inset 3px 0 0 var(--accent); }
+  .trace-item .top { display: flex; align-items: center; gap: 8px; }
+  .trace-item .sdot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .trace-item .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .trace-item .meta { color: var(--muted); font-size: 11.5px; margin-top: 3px; display: flex; gap: 10px; }
+  .trace-item .recover { color: var(--recover); }
+
+  .detail { min-width: 0; }
+  h2.tid { font-size: 14px; font-weight: 700; margin: 0 0 2px; word-break: break-all; }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+  .cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 11px; margin-bottom: 15px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 11px; padding: 11px 14px; }
+  .card .k { color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .4px; }
+  .card .v { font-weight: 800; font-size: 18px; margin-top: 4px; } .card .v2 { color: var(--muted); font-size: 11px; margin-top: 3px; }
+
+  .recover-banner { display: flex; gap: 10px; background: linear-gradient(90deg, rgba(168,85,247,.14), rgba(168,85,247,.04)); border: 1px solid rgba(168,85,247,.4); color: #e9d5ff; border-radius: 11px; padding: 11px 15px; margin-bottom: 15px; }
+  .recover-banner b { color: #fff; }
+
+  .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 20px 0 10px; }
+
+  /* timeline */
+  .tl { background: var(--panel); border: 1px solid var(--border); border-radius: 13px; padding: 16px 18px 8px; }
+  .ruler { position: relative; height: 16px; margin-left: 176px; border-bottom: 1px dashed var(--border2); margin-bottom: 9px; }
+  .ruler .tick { position: absolute; top: 0; transform: translateX(-50%); color: var(--muted); font-size: 10px; }
+  .ruler .grid-line { position: absolute; top: 16px; width: 1px; background: var(--border); opacity: .5; }
+  .row { display: flex; align-items: center; height: 30px; }
+  .row .gutter { width: 168px; flex: none; display: flex; align-items: center; gap: 7px; padding-right: 8px; overflow: hidden; }
+  .row .gutter .ico { width: 16px; text-align: center; flex: none; }
+  .row .gutter .lab { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .gutter .lab small { color: var(--muted); }
+  .track { position: relative; flex: 1; height: 100%; }
+  .span { position: absolute; top: 7px; height: 16px; border-radius: 5px; min-width: 3px; cursor: pointer; display: flex; align-items: center; padding: 0 6px; font-size: 10.5px; color: #fff; overflow: hidden; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+  .span:hover { filter: brightness(1.15); outline: 1px solid rgba(255,255,255,.6); }
+  .span.point { width: 9px; height: 9px; top: 11px; border-radius: 50%; padding: 0; box-shadow: 0 0 0 3px rgba(100,116,139,.2); }
+
+  /* flow / context graph */
+  .flow { background: var(--panel); border: 1px solid var(--border); border-radius: 13px; padding: 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .fnode { display: inline-flex; align-items: center; gap: 7px; padding: 8px 12px; border-radius: 10px; background: var(--bg2); border: 1px solid var(--border2); position: relative; }
+  .fnode .fi { width: 18px; text-align: center; }
+  .fnode .ft { font-weight: 600; } .fnode .fs { color: var(--muted); font-size: 11px; }
+  .fnode.llm { box-shadow: inset 0 0 0 1px rgba(59,130,246,.4); }
+  .fnode.tool { box-shadow: inset 0 0 0 1px rgba(139,92,246,.4); }
+  .fnode.err { box-shadow: inset 0 0 0 1px rgba(239,68,68,.5); background: rgba(239,68,68,.08); }
+  .farrow { color: var(--muted2); font-size: 16px; }
+  .fckpt { display: inline-flex; align-items: center; gap: 5px; color: var(--ok); font-size: 11px; padding: 4px 9px; border-radius: 999px; background: rgba(34,197,94,.1); border: 1px solid rgba(34,197,94,.3); }
+  .fend { display: inline-flex; align-items: center; gap: 6px; padding: 8px 13px; border-radius: 10px; background: rgba(34,197,94,.12); border: 1px solid rgba(34,197,94,.4); color: #bbf7d0; font-weight: 600; }
+
+  /* history */
+  .hist { border: 1px solid var(--border); border-radius: 13px; overflow: hidden; }
+  .hrow { display: grid; grid-template-columns: 38px 1fr 84px 116px; gap: 8px; align-items: center; padding: 9px 15px; border-bottom: 1px solid var(--border); }
+  .hrow:last-child { border-bottom: none; } .hrow:hover { background: var(--panel); }
+  .hrow .n { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .hrow .ty { display: flex; align-items: center; gap: 9px; min-width: 0; }
+  .hrow .pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; flex: none; }
+  .hrow .lab { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hrow .dur, .hrow .tok { color: var(--muted); font-size: 11.5px; text-align: right; font-variant-numeric: tabular-nums; }
+
+  .empty { color: var(--muted); text-align: center; padding: 80px 20px; }
+  .empty code { background: var(--panel); padding: 2px 7px; border-radius: 6px; color: var(--accent); }
+
+  #tip { position: fixed; pointer-events: none; background: #05070c; border: 1px solid var(--border2); border-radius: 9px; padding: 9px 11px; font-size: 11.5px; max-width: 300px; display: none; z-index: 50; box-shadow: 0 10px 30px rgba(0,0,0,.6); }
+  #tip .t { font-weight: 700; margin-bottom: 4px; } #tip .l { color: var(--muted); }
+
+  /* metrics tab: ML anomaly ribbons, alarm pill, config card, deep-link */
+  .alarmpill { background: rgba(239,68,68,.15); color: #fca5a5; border: 1px solid rgba(239,68,68,.4); padding: 4px 11px; border-radius: 999px; font-size: 11.5px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+  .alarmpill:hover { background: rgba(239,68,68,.24); }
+  .ribbon-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+  .ribbon-row .rl { color: var(--muted); font-size: 11px; min-width: 78px; text-transform: uppercase; letter-spacing: .4px; }
+  .ribbon-row .rv { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; min-width: 44px; text-align: right; }
+  .ribbon { height: 9px; border-radius: 5px; background: var(--bg); overflow: hidden; box-shadow: inset 0 0 0 1px var(--border); }
+  .ribbon > span { display: block; height: 100%; border-radius: 5px; min-width: 2px; transition: width .3s; }
+  .cfgcard { background: linear-gradient(180deg, var(--panel), var(--bg2)); border: 1px solid var(--border2); border-radius: 13px; padding: 24px 26px; max-width: 700px; margin: 14px auto; line-height: 1.7; }
+  .cfgcard h3 { margin: 0 0 12px; font-size: 15px; font-weight: 700; }
+  .cfgcard p { margin: 8px 0; }
+  .cfgcard code { background: var(--bg); padding: 2px 7px; border-radius: 6px; color: var(--accent); }
+  .cfgcard .muted { color: var(--muted); }
+  .deeplink { background: var(--panel2); border: 1px solid var(--border2); color: var(--accent); font: inherit; font-size: 12px; font-weight: 600; padding: 6px 12px; border-radius: 8px; cursor: pointer; margin-bottom: 14px; }
+  .deeplink:hover { background: var(--panel); filter: brightness(1.1); }
+
+  /* terminal tab: a Ghostty-styled command console (a kova REST interpreter,
+     not a PTY). Mono, dark, blinking caret; scrollback + prompt input. */
+  .term { display: flex; flex-direction: column; height: calc(100vh - 150px); min-height: 380px; background: #04060a; border: 1px solid var(--border2); border-radius: 13px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(91,157,255,.06), 0 10px 40px rgba(0,0,0,.4); }
+  .term-bar { display: flex; align-items: center; gap: 8px; padding: 9px 14px; border-bottom: 1px solid var(--border); background: var(--bg2); color: var(--muted); font-size: 11.5px; }
+  .term-bar .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .term-bar .right { margin-left: auto; color: var(--muted2); }
+  .term-out { flex: 1; overflow: auto; padding: 14px 16px; font-family: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.55; }
+  .term-out > div { white-space: pre; }
+  .term-out > div.wrap { white-space: pre-wrap; word-break: break-word; }
+  .term-echo { color: var(--accent); }
+  .term-echo::before { content: "kova❯ "; color: var(--accent2); font-weight: 700; }
+  .term-output { color: var(--text); }
+  .term-error { color: var(--err); }
+  .term-confirm { color: var(--warn); }
+  .term-muted { color: var(--muted); }
+  .term-line { display: flex; align-items: center; gap: 9px; padding: 11px 16px; border-top: 1px solid var(--border); background: var(--bg2); }
+  .term-line .pr { color: var(--accent2); font-weight: 700; flex: none; font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; }
+  .term-line input { flex: 1; background: transparent; border: none; outline: none; color: var(--text); font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; font-size: 12.5px; caret-color: var(--accent); }
+  .term-line input::placeholder { color: var(--muted2); }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="grad">Lumen.</span></div>
+  <div class="tag">agent observability</div>
+  <nav class="tabs">
+    <button id="tab-overview" class="on" onclick="setView('overview')">Overview</button>
+    <button id="tab-traces" onclick="setView('traces')">Traces</button>
+    <button id="tab-metrics" onclick="setView('metrics')">Metrics</button>
+    <button id="tab-terminal" onclick="setView('terminal')">Terminal</button>
+  </nav>
+  <div class="hstats">
+    <div class="hstat"><div class="v" id="s-runs">—</div><div class="k">runs</div></div>
+    <div class="hstat"><div class="v" id="s-cost">—</div><div class="k">cost</div></div>
+    <div class="hstat"><div class="v" id="s-tok">—</div><div class="k">tokens</div></div>
+    <span id="alarmpill" class="alarmpill" style="display:none" title="active Netdata alarms" onclick="setView('metrics')"></span>
+    <div class="live" id="live" title="auto-refresh every 4s"><span class="pulse"></span><span id="live-t">live</span></div>
+  </div>
+</header>
+
+<div class="wrap" id="root"><div class="empty">Loading traces…</div></div>
+<div id="tip"></div>
+
+<script>
+const C = { llm:"#3b82f6", tool:"#8b5cf6", ckpt:"#64748b", err:"#ef4444", unknown:"#888", ok:"#22c55e", warn:"#f59e0b" };
+const PALETTE = ["#5b9dff","#a855f7","#22d3ee","#f59e0b","#22c55e","#ec4899","#14b8a6","#f97316"];
+let TRACES = [], SELECTED = null, LIVE = true, VIEW = "overview", FILTER = "";
+// Netdata-backed Metrics tab state. NETDATA: {configured, reachable}; ALARMS:
+// active health alarms; METRIC_WINDOW: a per-run deep-link window (absolute
+// start/end ms so the relative query is recomputed correctly on each refresh).
+let NETDATA = {configured:false, reachable:false}, ALARMS = [], METRIC_WINDOW = null;
+// Terminal tab state. KOVA: {configured, reachable, loaded} (probed once via
+// /api/kova-status). TERM_HIST/TERM_HISTI: command history + cursor. TERM_PENDING:
+// a destructive command line awaiting an explicit confirm.
+let KOVA = {configured:false, reachable:false, loaded:false};
+let TERM_HIST = [], TERM_HISTI = 0, TERM_PENDING = null;
+// Top-level verbs for tab-completion (mirror of kova.rs KOVA_VERBS; a Rust test
+// asserts this list and KOVA_VERBS stay in sync).
+const KOVA_VERBS = ["status","config","agents","agent","workflows","workflow","awaiting","approvals","schedules","schedule","tools","queues","traces","trace","llm","help","clear"];
+
+const fmtUsd = n => { const v = n||0; return "$" + v.toFixed(v<0.01?5:4); };
+const fmtTok = n => n>=1000 ? (n/1000).toFixed(1)+"k" : String(n||0);
+const fmtDur = ms => ms<1000 ? Math.round(ms)+"ms" : ms<60000 ? (ms/1000).toFixed(ms<10000?2:1)+"s" : (ms/60000).toFixed(1)+"m";
+function fmtBytes(n){ n=n||0; if(n<1024) return Math.round(n)+" B"; if(n<1048576) return (n/1024).toFixed(1)+" KB"; if(n<1073741824) return (n/1048576).toFixed(1)+" MB"; return (n/1073741824).toFixed(2)+" GB"; }
+const shortId = s => { s=String(s); return s.length>12 ? s.slice(0,12)+"…" : s; };
+
+// The fixed kova chart set (mirrors netdata.rs KOVA_CHARTS) with display meta.
+const METRIC_CHARTS = [
+  { id:"prometheus.kova_queue_depth",             title:"Agent-dispatch queue depth", fmt:n=>String(Math.round(n)) },
+  { id:"prometheus.kova_wal_bytes_total",         title:"WAL bytes",                  fmt:fmtBytes },
+  { id:"prometheus.kova_agent_iterations_total",  title:"Throughput (iterations)",    fmt:n=>String(Math.round(n)) },
+  { id:"prometheus.kova_agent_tokens_completion", title:"Completion tokens",          fmt:fmtTok },
+  { id:"prometheus.kova_agent_run_total_cost_usd",title:"Cost (USD)",                 fmt:fmtUsd },
+];
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+// Safe to interpolate into a single-quoted JS string inside a double-quoted
+// HTML attribute (onclick="…'${jsAttr(v)}'…"): backslash-escape \\ and ' first
+// (JS-string level), then HTML-escape (attribute level). esc() alone misses ',
+// which lets an agent_id like `x';alert(1)//` break out of the handler.
+const jsAttr = s => esc(String(s).replace(/[\\']/g, c => "\\" + c));
+
+function stepInfo(st) {
+  const t = st.step_type || {};
+  if (t.LlmCall)    return { kind:"llm",  label:t.LlmCall.model, sub:t.LlmCall.finish_reason, icon:"🧠", color:C.llm, point:false };
+  if (t.ToolCall)   return { kind:"tool", label:t.ToolCall.tool_name, sub:t.ToolCall.success?"ok":"failed", icon:"🔧", color:t.ToolCall.success?C.tool:C.err, point:false };
+  if (t.Checkpoint) return { kind:"ckpt", label:"checkpoint", sub:"iter "+t.Checkpoint.iteration, icon:"⚓", color:C.ckpt, point:true };
+  if (t.Error)      return { kind:"err",  label:"error", sub:t.Error.message, icon:"✕", color:C.err, point:false };
+  return { kind:"unknown", label:"unknown", sub:"", icon:"•", color:C.unknown, point:true };
+}
+const statusInfo = s => s==="Completed" ? {dot:C.ok,label:"completed"} : s==="Running" ? {dot:C.llm,label:"running"} : (s&&s.Failed!==undefined) ? {dot:C.err,label:"failed"} : {dot:C.ckpt,label:String(s)};
+function traceEnd(t){ if(t.completed_at_ms) return t.completed_at_ms; let m=t.started_at_ms; for(const s of t.steps) m=Math.max(m,s.started_at_ms+s.duration_ms); return m; }
+const traceDur = t => traceEnd(t) - t.started_at_ms;
+
+/* ---------- charts (zero-dependency, hand-rolled) ---------- */
+function hbars(items, fmt) {
+  const max = Math.max(...items.map(i=>i.value), 1e-9);
+  return `<div class="bars">` + items.map(i => `
+    <div class="bar-row"><div class="bl" title="${esc(i.label)}">${esc(i.label)}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${i.value/max*100}%;background:${i.color||'linear-gradient(90deg,#5b9dff,#a855f7)'}"></div></div>
+      <div class="bar-val">${fmt(i.value)}</div></div>`).join("") + `</div>`;
+}
+function stackbars(items) { // items: {label, parts:[{value,color}], total}
+  const max = Math.max(...items.map(i=>i.total), 1e-9);
+  return `<div class="bars">` + items.map(i => `
+    <div class="bar-row"><div class="bl" title="${esc(i.label)}">${esc(i.label)}</div>
+      <div class="bar-track"><div class="bar-fill stack" style="width:${i.total/max*100}%">
+        ${i.parts.map(p=>`<span style="width:${i.total?p.value/i.total*100:0}%;background:${p.color}" title="${p.value}"></span>`).join("")}
+      </div></div><div class="bar-val">${fmtTok(i.total)}</div></div>`).join("") + `</div>`;
+}
+function donut(items, label) {
+  const total = items.reduce((a,i)=>a+i.value,0), size=132, sw=18, r=(size-sw)/2, circ=2*Math.PI*r;
+  let off=0;
+  const segs = items.filter(i=>i.value>0).map(i=>{ const len=i.value/(total||1)*circ; const s=`<circle r="${r}" cx="${size/2}" cy="${size/2}" fill="none" stroke="${i.color}" stroke-width="${sw}" stroke-dasharray="${len} ${circ-len}" stroke-dashoffset="${-off}" transform="rotate(-90 ${size/2} ${size/2})"/>`; off+=len; return s; }).join("");
+  const center = items.reduce((a,i)=>a+i.value,0);
+  return `<div class="donut-wrap"><div class="donut-c" style="width:${size}px;height:${size}px">
+    <svg width="${size}" height="${size}"><circle r="${r}" cx="${size/2}" cy="${size/2}" fill="none" stroke="var(--bg)" stroke-width="${sw}"/>${segs}</svg>
+    <div class="center"><div class="n">${center}</div><div class="l">${esc(label)}</div></div></div>
+    <div class="legend">${items.map(i=>`<div class="lg"><span class="sw" style="background:${i.color}"></span>${esc(i.label)}<span class="lv">${i.value}</span></div>`).join("")}</div></div>`;
+}
+
+/* ---------- data ---------- */
+async function load() {
+  try { TRACES = await (await fetch("/api/traces")).json(); } catch(e) { TRACES = []; }
+  await loadNetdataMeta();               // status + alarms (best-effort, never blocks traces)
+  const cost = TRACES.reduce((a,t)=>a+(t.total_cost_usd||0),0);
+  const tok = TRACES.reduce((a,t)=>a+(t.total_tokens?.prompt_tokens||0)+(t.total_tokens?.completion_tokens||0),0);
+  s_runs.textContent = TRACES.length; s_cost.textContent = fmtUsd(cost); s_tok.textContent = fmtTok(tok);
+  if (!SELECTED && TRACES.length) SELECTED = TRACES[0].trace_id;
+  render();
+}
+// Refresh Netdata reachability + active alarms. Drives the header alarm pill on
+// every tab; the Metrics tab reads NETDATA to choose config-card vs live panels.
+async function loadNetdataMeta() {
+  try { NETDATA = await (await fetch("/api/netdata-status")).json(); }
+  catch(e) { NETDATA = {configured:false, reachable:false}; }
+  if (NETDATA.configured && NETDATA.reachable) {
+    try { ALARMS = activeAlarms(await (await fetch("/api/alarms")).json()); }
+    catch(e) { ALARMS = []; }
+  } else { ALARMS = []; }
+  renderAlarmPill();
+}
+// Netdata /api/v1/alarms → the WARNING/CRITICAL entries only.
+function activeAlarms(j) {
+  const alarms = (j && j.alarms) || {};
+  const out = [];
+  for (const name of Object.keys(alarms)) {
+    const a = alarms[name] || {};
+    if (a.status === "WARNING" || a.status === "CRITICAL")
+      out.push({ name, status:a.status, value:a.value, info:a.info || "" });
+  }
+  return out;
+}
+function renderAlarmPill() {
+  const el = document.getElementById("alarmpill"); if (!el) return;
+  if (!ALARMS.length) { el.style.display = "none"; return; }
+  const crit = ALARMS.filter(a=>a.status==="CRITICAL").length;
+  el.style.display = "";
+  el.textContent = `⚠ ${ALARMS.length} alarm${ALARMS.length>1?"s":""}${crit?` · ${crit} crit`:""}`;
+  el.title = ALARMS.map(a=>`${a.status}: ${a.name}`).join("\n");
+}
+function setView(v){ VIEW=v; for (const t of ["overview","traces","metrics","terminal"]) document.getElementById("tab-"+t).classList.toggle("on", v===t); render(); }
+function render(){ if (VIEW==="overview") renderOverview(); else if (VIEW==="traces") renderTraces(); else if (VIEW==="metrics") renderMetrics(); else if (VIEW==="terminal") renderTerminal(); }
+
+/* ---------- metrics (Netdata-backed) ---------- */
+// Aggregate a Netdata anomaly-bit body to a single 0–100 rate (mirror of
+// netdata.rs::anomaly_rate_from_data: mean of the latest row's dim values).
+function anomalyRate(body) {
+  const rows = body && body.data;
+  if (!Array.isArray(rows) || !rows.length) return null;
+  const last = rows[rows.length-1];
+  if (!Array.isArray(last) || last.length < 2) return null;
+  let sum=0, n=0;
+  for (let i=1;i<last.length;i++) if (typeof last[i]==="number") { sum+=last[i]; n++; }
+  return n ? sum/n : null;
+}
+// Latest per-dimension (per-tester) values from a Netdata data body.
+function latestDims(body) {
+  const labels = (body && body.labels) || [];
+  const rows = (body && body.data) || [];
+  if (!rows.length) return [];
+  const last = rows[rows.length-1], out = [];
+  for (let i=1;i<last.length;i++) if (typeof last[i]==="number")
+    out.push({ label:String(labels[i]!=null?labels[i]:("dim"+i)), value:last[i] });
+  return out;
+}
+const ribbonColor = r => r==null ? "var(--muted2)" : r>=66 ? C.err : r>=33 ? C.warn : C.ok;
+function ribbon(r) { const v = r==null?0:Math.max(0,Math.min(100,r)); return `<div class="ribbon" style="flex:1"><span style="width:${v}%;background:${ribbonColor(r)}"></span></div>`; }
+// Recompute the relative query window from absolute run timestamps each render,
+// so a deep-linked past window stays correct under live refresh.
+function windowQuery() {
+  if (METRIC_WINDOW) {
+    const now = Date.now();
+    const after = Math.min(0, -((now - METRIC_WINDOW.startMs)/1000));
+    const before = Math.min(0, -((now - METRIC_WINDOW.endMs)/1000));
+    return { after, before, label: METRIC_WINDOW.label };
+  }
+  return { after:-600, before:0, label:"last 10m" };
+}
+async function renderMetrics() {
+  const root = document.getElementById("root");
+  if (!NETDATA.configured) { root.innerHTML = cfgCard(); return; }
+  if (!NETDATA.reachable)  { root.innerHTML = unreachableCard(); return; }
+
+  const win = windowQuery();
+  const qs = `after=${Math.round(win.after)}&before=${Math.round(win.before)}&points=60`;
+  let anomalies = null; const charts = {};
+  try {
+    const reqs = [ fetch(`/api/anomalies?${qs}`).then(r=>r.ok?r.json():null).catch(()=>null) ];
+    for (const c of METRIC_CHARTS)
+      reqs.push(fetch(`/api/metrics?chart=${encodeURIComponent(c.id)}&${qs}`).then(r=>r.ok?r.json():null).catch(()=>null));
+    const res = await Promise.all(reqs);
+    anomalies = res[0];
+    METRIC_CHARTS.forEach((c,i)=>{ charts[c.id] = res[i+1]; });
+  } catch(e) { /* render whatever we have */ }
+  if (VIEW !== "metrics") return;        // user switched tabs mid-fetch
+  root.innerHTML = metricsHtml({ anomalies, charts, win });
+}
+function metricsHtml(M) {
+  const nodeRate = anomalyRate(M.anomalies && M.anomalies.node);
+  const crit = ALARMS.filter(a=>a.status==="CRITICAL").length;
+  const deepBanner = METRIC_WINDOW
+    ? `<div class="recover-banner">🔎 <div><b>Scoped to one run's window</b> (${esc(M.win.label)}). Metrics + ML anomaly as kova saw them while this run executed. <a href="#" style="color:var(--accent)" onclick="METRIC_WINDOW=null;renderMetrics();return false">view live (last 10m) →</a></div></div>`
+    : "";
+  const kpis = `<div class="kpis" style="grid-template-columns:repeat(4,1fr)">
+    <div class="kpi"><div class="k">fleet ML anomaly</div><div class="v" style="color:${ribbonColor(nodeRate)}">${nodeRate==null?"—":nodeRate.toFixed(1)+"%"}</div><div class="d">${esc(M.win.label)}</div></div>
+    <div class="kpi"><div class="k">active alarms</div><div class="v" style="color:${ALARMS.length?C.warn:C.text}">${ALARMS.length}</div><div class="d">${crit} critical</div></div>
+    <div class="kpi"><div class="k">charts</div><div class="v">${METRIC_CHARTS.length}</div><div class="d">prometheus.kova_* via Netdata</div></div>
+    <div class="kpi"><div class="k">source</div><div class="v" style="font-size:15px;color:${C.ok}">Netdata</div><div class="d">per-metric ML anomaly</div></div>
+  </div>`;
+  const panels = METRIC_CHARTS.map(c=>{
+    const body = M.charts[c.id];
+    const anomBody = M.anomalies && M.anomalies.charts && M.anomalies.charts[c.id];
+    const rate = anomalyRate(anomBody);
+    const rateTxt = rate==null ? "—" : rate.toFixed(0)+"%";
+    if (!body || body.error) {
+      const why = body && body.error ? ` <span class="muted">(${esc(body.error)})</span>` : "";
+      return `<div class="panel col-6"><h3>${esc(c.title)} <span class="hint">ML anomaly ${rateTxt}</span></h3>
+        <div class="empty" style="padding:26px">no data yet${why}</div>
+        <div class="ribbon-row"><span class="rl">ML anomaly</span>${ribbon(rate)}<span class="rv">${rateTxt}</span></div></div>`;
+    }
+    const dims = latestDims(body).map((d,i)=>({label:d.label, value:d.value, color:PALETTE[i%PALETTE.length]}));
+    const bars = dims.length ? hbars(dims, c.fmt) : '<div class="empty" style="padding:20px">no current samples</div>';
+    return `<div class="panel col-6"><h3>${esc(c.title)} <span class="hint">ML anomaly ${rateTxt}</span></h3>
+      ${bars}
+      <div class="ribbon-row"><span class="rl">ML anomaly</span>${ribbon(rate)}<span class="rv">${rateTxt}</span></div></div>`;
+  }).join("");
+  const alarmsPanel = `<div class="panel col-12"><h3>Active alarms <span class="hint">Netdata health</span></h3>${
+    ALARMS.length
+      ? `<div class="hist">` + ALARMS.map(a=>`<div class="hrow" style="grid-template-columns:96px 1fr 110px">
+          <span class="pill" style="background:${a.status==="CRITICAL"?"rgba(239,68,68,.18)":"rgba(245,158,11,.18)"};color:${a.status==="CRITICAL"?C.err:C.warn}">${esc(a.status)}</span>
+          <span class="lab"><b>${esc(a.name)}</b> <span style="color:var(--muted)">${esc(a.info)}</span></span>
+          <span class="tok">${a.value!=null?esc(String(a.value)):""}</span></div>`).join("") + `</div>`
+      : '<div class="empty" style="padding:26px">No active alarms.</div>'
+  }</div>`;
+  return `${deepBanner}${kpis}<div class="grid">${panels}${alarmsPanel}</div>`;
+}
+function cfgCard() {
+  return `<div class="cfgcard">
+    <h3>📈 Metrics — connect Netdata</h3>
+    <p class="muted">This tab renders kova's live metrics and Netdata's per-metric <b>ML anomaly detection</b> in Lumen's style. Point Lumen at your Netdata agent to enable it.</p>
+    <p>Restart the dashboard with the Netdata URL:</p>
+    <p><code>lumen dashboard --netdata-url http://localhost:19999</code></p>
+    <p class="muted">…or set <code>LUMEN_NETDATA_URL</code> in the environment. Over Tailscale use <code>http://100.122.83.20:19999</code>.</p>
+    <p class="muted">Netdata scrapes kova-rest's Prometheus <code>/metrics</code> into charts <code>prometheus.kova_*</code> (one dimension per tester) — <b>no change to your services</b>. Lumen proxies Netdata server-side, so the browser stays single-origin.</p>
+  </div>`;
+}
+function unreachableCard() {
+  return `<div class="cfgcard">
+    <h3>📈 Metrics — Netdata unreachable</h3>
+    <p class="muted">Lumen is configured for Netdata but couldn't reach it. Confirm the Netdata agent is running and the URL is correct — live panels appear here automatically once it responds.</p>
+  </div>`;
+}
+function metricsForRun(tid) {
+  const t = TRACES.find(x=>x.trace_id===tid); if (!t) return;
+  METRIC_WINDOW = { startMs:t.started_at_ms, endMs:(t.completed_at_ms||Date.now()), label:`run ${shortId(tid)} · ${fmtDur((t.completed_at_ms||Date.now())-t.started_at_ms)} window` };
+  setView('metrics');
+}
+
+/* ---------- terminal (kova control console) ----------
+   A Ghostty-styled command console, NOT a PTY: the user types whitelisted kova
+   verbs and Lumen proxies each to kova's REST API (POST /api/console), with the
+   API key held server-side. Mount-once so the 4s poll never wipes scrollback. */
+function renderTerminal() {
+  const root = document.getElementById("root");
+  if (!KOVA.loaded) {                       // probe reachability once, then re-render
+    fetch("/api/kova-status").then(r=>r.json())
+      .then(j=>{ KOVA = {configured:!!j.configured, reachable:!!j.reachable, loaded:true}; if (VIEW==="terminal") renderTerminal(); })
+      .catch(()=>{ KOVA = {configured:false, reachable:false, loaded:true}; if (VIEW==="terminal") renderTerminal(); });
+    root.innerHTML = `<div class="empty">Connecting to Kova…</div>`;
+    return;
+  }
+  if (!KOVA.configured) { root.innerHTML = kovaCfgCard(); return; }
+  if (document.getElementById("term")) return;   // mount-once: keep scrollback + focus
+  const ok = KOVA.reachable;
+  root.innerHTML = `<div class="term" id="term">
+    <div class="term-bar"><span class="dot" style="background:${ok?C.ok:C.warn}"></span>
+      <span>kova control console</span>
+      <span class="right">${ok?"connected":"configured · unreachable"} · type <b>help</b> · ↑↓ history · ⇥ complete</span></div>
+    <div class="term-out" id="termout"></div>
+    <div class="term-line" onclick="document.getElementById('terminput').focus()">
+      <span class="pr">kova❯</span>
+      <input id="terminput" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="${ok?'agents':'(kova unreachable — commands will fail until it responds)'}">
+    </div></div>`;
+  const inp = document.getElementById("terminput");
+  inp.addEventListener("keydown", termKey);
+  termAppend("muted", ok
+    ? "Connected. Read verbs are safe; mutations change state; destructive verbs ask to confirm. `help` for the full list."
+    : "Kova is configured but not responding yet. Commands will fail with ✗ until it comes back. `help` still works.");
+  inp.focus();
+}
+function kovaCfgCard() {
+  return `<div class="cfgcard">
+    <h3>🖥️ Terminal — connect Kova</h3>
+    <p class="muted">Drive a running Kova from here: inspect agents / workflows / traces and run safe control verbs. Lumen proxies each command to Kova's REST API and holds the API key <b>server-side</b> — the browser never sees it. This is a kova-REST <b>command console</b>, not a shell (no PTY).</p>
+    <p>Restart the dashboard pointed at your Kova:</p>
+    <p><code>lumen dashboard --kova-url http://localhost:3010 --api-key sk-kova-…</code></p>
+    <p class="muted">…or set <code>LUMEN_KOVA_URL</code> + <code>LUMEN_KOVA_API_KEY</code>. Over Tailscale use <code>http://100.122.83.20:3010</code>.</p>
+    <p class="muted">Read verbs need no LLM; agent <i>runs</i> need a working LLM key on Kova. Destructive verbs (reset / terminate / delete) require an explicit confirm.</p>
+  </div>`;
+}
+// Append a scrollback line. textContent (not innerHTML) keeps every kova-derived
+// string inert — no HTML/JS interpretation, stronger than esc() for this surface.
+function termAppend(kind, text, wrap) {
+  const o = document.getElementById("termout"); if (!o) return;
+  const d = document.createElement("div");
+  d.className = "term-" + kind + (wrap ? " wrap" : "");
+  d.textContent = text;
+  o.appendChild(d); o.scrollTop = o.scrollHeight;
+}
+function termEcho(cmd){ termAppend("echo", cmd); }
+async function postConsole(line, confirm) {
+  try {
+    const r = await fetch("/api/console", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({line, confirm})});
+    return await r.json();
+  } catch(e) { return {kind:"error", text:"dashboard request failed: " + e}; }
+}
+function termShow(j) {
+  if (j.kind === "error")  termAppend("error", j.text, true);
+  else if (j.kind === "config") termAppend("muted", j.text, true);
+  else termAppend("output", j.text || "(ok)");
+}
+async function termSubmit() {
+  const inp = document.getElementById("terminput"); if (!inp) return;
+  const val = inp.value; inp.value = "";
+  const v = val.trim();
+  // Confirm flow: a prior destructive command is pending.
+  if (TERM_PENDING) {
+    const pending = TERM_PENDING; TERM_PENDING = null;
+    if (v === "" || v.toLowerCase() === "y" || v.toLowerCase() === "yes") {
+      termAppend("muted", "confirmed.");
+      termShow(await postConsole(pending, true));
+      return;
+    }
+    termAppend("muted", "cancelled.");
+    // fall through: treat v as a fresh command
+  }
+  if (v === "") return;
+  TERM_HIST.push(v); TERM_HISTI = TERM_HIST.length;
+  termEcho(v);
+  if (v === "clear") { document.getElementById("termout").innerHTML = ""; return; }
+  const j = await postConsole(v, false);
+  if (j.kind === "confirm") {
+    TERM_PENDING = v;
+    termAppend("confirm", j.text, true);
+    termAppend("muted", "press ⏎ again (or type y) to confirm · anything else cancels");
+    return;
+  }
+  termShow(j);
+}
+function termKey(e) {
+  const inp = e.target;
+  if (e.key === "Enter") { e.preventDefault(); termSubmit(); }
+  else if (e.key === "ArrowUp")   { e.preventDefault(); if (TERM_HIST.length) { TERM_HISTI = Math.max(0, TERM_HISTI-1); inp.value = TERM_HIST[TERM_HISTI] || ""; } }
+  else if (e.key === "ArrowDown") { e.preventDefault(); if (TERM_HIST.length) { TERM_HISTI = Math.min(TERM_HIST.length, TERM_HISTI+1); inp.value = TERM_HIST[TERM_HISTI] || ""; } }
+  else if (e.key === "Tab")       { e.preventDefault(); termComplete(inp); }
+}
+// Tab-completion for the first token (the verb) against KOVA_VERBS.
+function termComplete(inp) {
+  const v = inp.value;
+  if (v.includes(" ")) return;            // only complete the leading verb
+  const m = KOVA_VERBS.filter(x => x.startsWith(v));
+  if (m.length === 1) inp.value = m[0] + (m[0]==="help" || m[0]==="clear" ? "" : " ");
+  else if (m.length > 1) termAppend("muted", m.join("  "));
+}
+
+/* ---------- overview ---------- */
+function renderOverview() {
+  const root = document.getElementById("root");
+  if (!TRACES.length) { root.innerHTML = `<div class="empty">No traces yet.<br><br>Pull from a running Kova:<br><br><code>lumen pull --kova-url http://&lt;host&gt;:3010 --api-key &lt;key&gt;</code></div>`; return; }
+
+  const runs = TRACES.length;
+  const cost = TRACES.reduce((a,t)=>a+(t.total_cost_usd||0),0);
+  const pt = TRACES.reduce((a,t)=>a+(t.total_tokens?.prompt_tokens||0),0);
+  const ct = TRACES.reduce((a,t)=>a+(t.total_tokens?.completion_tokens||0),0);
+  const ok = TRACES.filter(t=>t.status==="Completed").length;
+  const recovered = TRACES.filter(t=>t.parent_trace_id).length;
+  const avgDur = TRACES.reduce((a,t)=>a+traceDur(t),0)/runs;
+  const mean = cost/runs;
+  const anomalies = TRACES.filter(t=>mean>0 && t.total_cost_usd>mean*2);
+
+  // step-type mix
+  const kinds = {llm:0,tool:0,ckpt:0,err:0};
+  const kdur = {llm:[],tool:[],ckpt:[]};
+  const models = {};
+  for (const t of TRACES) for (const s of t.steps) { const i=stepInfo(s); if(kinds[i.kind]!==undefined)kinds[i.kind]++; if(kdur[i.kind])kdur[i.kind].push(s.duration_ms); if(s.step_type.LlmCall){const m=s.step_type.LlmCall.model; models[m]=(models[m]||0)+1;} }
+  const avg = a => a.length ? a.reduce((x,y)=>x+y,0)/a.length : 0;
+
+  const costBars = TRACES.map((t,i)=>({label:t.agent_id, value:t.total_cost_usd||0, color:PALETTE[i%PALETTE.length]}));
+  const tokBars = TRACES.map(t=>({label:t.agent_id, total:(t.total_tokens?.prompt_tokens||0)+(t.total_tokens?.completion_tokens||0),
+    parts:[{value:t.total_tokens?.prompt_tokens||0,color:"#5b9dff"},{value:t.total_tokens?.completion_tokens||0,color:"#a855f7"}]}));
+  const latBars = [
+    {label:"🧠 LLM call", value:avg(kdur.llm), color:C.llm},
+    {label:"🔧 tool call", value:avg(kdur.tool), color:C.tool},
+    {label:"⚓ checkpoint", value:avg(kdur.ckpt), color:C.ckpt},
+  ];
+  const stepDonut = [
+    {label:"LLM call", value:kinds.llm, color:C.llm},
+    {label:"tool call", value:kinds.tool, color:C.tool},
+    {label:"checkpoint", value:kinds.ckpt, color:C.ckpt},
+    {label:"error", value:kinds.err, color:C.err},
+  ].filter(x=>x.value>0);
+  const modelDonut = Object.entries(models).map(([m,v],i)=>({label:m,value:v,color:PALETTE[i%PALETTE.length]}));
+
+  root.innerHTML = `
+    <div class="kpis">
+      <div class="kpi"><div class="k">runs</div><div class="v">${runs}</div><div class="d">${recovered} crash-recovered</div></div>
+      <div class="kpi"><div class="k">total cost</div><div class="v">${fmtUsd(cost)}</div><div class="d">${fmtUsd(mean)} avg / run</div></div>
+      <div class="kpi"><div class="k">tokens</div><div class="v">${fmtTok(pt+ct)}</div><div class="d">${fmtTok(pt)} in · ${fmtTok(ct)} out</div></div>
+      <div class="kpi"><div class="k">success rate</div><div class="v">${Math.round(ok/runs*100)}%</div><div class="d">${ok}/${runs} completed</div></div>
+      <div class="kpi"><div class="k">avg duration</div><div class="v">${fmtDur(avgDur)}</div><div class="d">per agent run</div></div>
+      <div class="kpi"><div class="k">cost outliers</div><div class="v" style="color:${anomalies.length?C.warn:C.text}">${anomalies.length}</div><div class="d">&gt; 2× run mean (offline)</div></div>
+    </div>
+    <div class="grid">
+      <div class="panel col-6"><h3>Cost by run <span class="hint">USD</span></h3>${hbars(costBars, fmtUsd)}</div>
+      <div class="panel col-6"><h3>Tokens by run <span class="hint"><span style="color:#5b9dff">▮</span> in &nbsp;<span style="color:#a855f7">▮</span> out</span></h3>${stackbars(tokBars)}</div>
+      <div class="panel col-4"><h3>Step-type mix</h3>${donut(stepDonut, "steps")}</div>
+      <div class="panel col-4"><h3>Avg latency by step <span class="hint">ms</span></h3>${hbars(latBars, fmtDur)}</div>
+      <div class="panel col-4"><h3>Model usage <span class="hint">calls</span></h3>${modelDonut.length?donut(modelDonut,"calls"):'<div class="empty" style="padding:30px">no LLM calls</div>'}</div>
+      <div class="panel col-12"><h3>Recent runs <span class="hint">click a row to inspect →</span></h3>${recentTable()}</div>
+    </div>`;
+}
+function recentTable() {
+  const mean = TRACES.reduce((a,t)=>a+(t.total_cost_usd||0),0)/Math.max(TRACES.length,1);
+  return `<div class="hist">` + TRACES.map(t=>{
+    const si=statusInfo(t.status); const steps=t.steps.length;
+    const anomaly = mean>0 && t.total_cost_usd>mean*2;
+    return `<div class="hrow" style="grid-template-columns:18px 1fr 90px 80px 90px 70px;cursor:pointer" onclick="SELECTED='${jsAttr(t.trace_id)}';setView('traces')">
+      <span class="sdot" style="background:${si.dot};width:9px;height:9px;border-radius:50%"></span>
+      <div class="ty"><span class="lab"><b>${esc(t.agent_id)}</b> <span style="color:var(--muted)">${esc(t.trace_id)}</span></span>${t.parent_trace_id?'<span class="recover" style="color:var(--recover)">⟳</span>':''}</div>
+      <div class="tok">${steps} steps</div>
+      <div class="tok" style="color:${anomaly?C.warn:'var(--muted)'}">${fmtUsd(t.total_cost_usd)}${anomaly?' <span title="cost outlier (&gt; 2× run mean) — offline flag, not Netdata ML">⚠</span>':''}</div>
+      <div class="tok">${fmtTok((t.total_tokens?.prompt_tokens||0)+(t.total_tokens?.completion_tokens||0))} tok</div>
+      <div class="tok">${fmtDur(traceDur(t))}</div></div>`;
+  }).join("") + `</div>`;
+}
+
+/* ---------- traces ---------- */
+function renderTraces() {
+  const root = document.getElementById("root");
+  root.innerHTML = `<div class="tview">
+    <aside class="sidebar"><div class="sb-head">Traces <input id="flt" placeholder="filter…" oninput="FILTER=this.value;renderList()"></div><div id="list"></div></aside>
+    <main class="detail" id="detail"></main></div>`;
+  const f = document.getElementById("flt"); if (f) f.value = FILTER;
+  renderList(); renderDetail();
+}
+function renderList() {
+  const el = document.getElementById("list"); if (!el) return;
+  const items = TRACES.filter(t => !FILTER || (t.agent_id+t.trace_id).toLowerCase().includes(FILTER.toLowerCase()));
+  if (!items.length) { el.innerHTML = '<div class="empty" style="padding:36px 16px">No matching traces.</div>'; return; }
+  const mean = TRACES.reduce((a,t)=>a+(t.total_cost_usd||0),0)/Math.max(TRACES.length,1);
+  el.innerHTML = items.map(t=>{
+    const si=statusInfo(t.status); const anomaly=mean>0&&t.total_cost_usd>mean*2;
+    return `<div class="trace-item ${t.trace_id===SELECTED?'sel':''}" onclick="SELECTED='${jsAttr(t.trace_id)}';renderList();renderDetail()">
+      <div class="top"><span class="sdot" style="background:${si.dot}"></span><span class="name">${esc(t.agent_id)}</span>${anomaly?'<span title="cost outlier (&gt; 2× run mean) — offline flag, not Netdata ML" style="margin-left:auto;color:var(--warn)">⚠</span>':''}</div>
+      <div class="meta"><span>${t.steps.length} steps</span><span>${fmtUsd(t.total_cost_usd)}</span><span>${fmtDur(traceDur(t))}</span>${t.parent_trace_id?'<span class="recover">⟳ recovered</span>':''}</div></div>`;
+  }).join("");
+}
+function renderDetail() {
+  const el = document.getElementById("detail"); if (!el) return;
+  const t = TRACES.find(x=>x.trace_id===SELECTED);
+  if (!t) { el.innerHTML = '<div class="empty">Select a trace.</div>'; return; }
+  const si=statusInfo(t.status), start=t.started_at_ms, total=Math.max(traceDur(t),1);
+  const pt=t.total_tokens?.prompt_tokens||0, ct=t.total_tokens?.completion_tokens||0;
+  const models=[...new Set(t.steps.filter(s=>s.step_type.LlmCall).map(s=>s.step_type.LlmCall.model))];
+
+  const TICKS=6; let ruler="";
+  for(let i=0;i<=TICKS;i++){const p=i/TICKS; ruler+=`<span class="tick" style="left:${p*100}%">${fmtDur(Math.round(total*p))}</span><span class="grid-line" style="left:${p*100}%;height:${t.steps.length*30}px"></span>`;}
+
+  const rows = t.steps.map(s=>{
+    const info=stepInfo(s); const left=(s.started_at_ms-start)/total*100; const width=Math.max(s.duration_ms/total*100,0.5);
+    const tokTxt = s.tokens ? ` · ${s.tokens.prompt_tokens}+${s.tokens.completion_tokens} tok` : "";
+    const tipParts = [`${info.icon} ${esc(info.label)}`, `kind=${info.kind} · +${fmtDur(s.started_at_ms-start)} · ${fmtDur(s.duration_ms)}${tokTxt}`, esc(info.sub)];
+    return `<div class="row"><div class="gutter"><span class="ico">${info.icon}</span><span class="lab">${esc(info.label)} <small>${esc(info.sub)}</small></span></div>
+      <div class="track"><div class="${info.point?'span point':'span'}" style="left:${left}%;${info.point?'':'width:'+width+'%;'}background:${info.color}"
+        onmousemove="showTip(event,'${encodeURIComponent(JSON.stringify(tipParts))}')" onmouseleave="hideTip()">${info.point?'':esc(info.label)}</div></div></div>`;
+  }).join("");
+
+  const hist = t.steps.map(s=>{const info=stepInfo(s); const tok=s.tokens?`${s.tokens.prompt_tokens}+${s.tokens.completion_tokens}`:"—";
+    return `<div class="hrow"><div class="n">#${s.step_num}</div>
+      <div class="ty"><span class="pill" style="background:${info.color}22;color:${info.color}">${info.icon} ${esc(info.kind)}</span><span class="lab">${esc(info.label)} <span style="color:var(--muted)">${esc(info.sub)}</span></span></div>
+      <div class="dur">${fmtDur(s.duration_ms)}</div><div class="tok">${tok} tok</div></div>`;}).join("");
+
+  el.innerHTML = `
+    <h2 class="tid">${esc(t.trace_id)}</h2>
+    <div class="sub">agent <b>${esc(t.agent_id)}</b> · task ${t.task_id} · schema v${t.schema_version}</div>
+    <button class="deeplink" title="open the Metrics tab scoped to this run's [start, end] window" onclick="metricsForRun('${jsAttr(t.trace_id)}')">📈 view metrics for this run's window</button>
+    <div class="cards">
+      <div class="card"><div class="k">status</div><div class="v" style="color:${si.dot}">${esc(si.label)}</div></div>
+      <div class="card"><div class="k">duration</div><div class="v">${fmtDur(total)}</div></div>
+      <div class="card"><div class="k">cost</div><div class="v">${fmtUsd(t.total_cost_usd)}</div></div>
+      <div class="card"><div class="k">tokens</div><div class="v">${fmtTok(pt+ct)}</div><div class="v2">${pt} in · ${ct} out</div></div>
+      <div class="card"><div class="k">model</div><div class="v" style="font-size:14px">${models.map(esc).join(", ")||"—"}</div></div>
+    </div>
+    ${t.parent_trace_id?`<div class="recover-banner">⟳ <div><b>Crash-recovered run.</b> Resumed from <code>${esc(t.parent_trace_id)}</code> — Kova replayed the WAL so no work was lost. <span style="color:var(--muted)">Temporal can't show this for agents.</span></div></div>`:""}
+    <div class="section-title">Context flow</div>${flowGraph(t)}
+    <div class="section-title">Timeline</div>
+    <div class="tl"><div class="ruler">${ruler}</div>${rows}
+      <div class="legend" style="flex-direction:row;gap:16px;margin-top:10px;color:var(--muted);font-size:11.5px">
+        <span class="lg"><span class="sw" style="background:${C.llm}"></span>LLM call</span>
+        <span class="lg"><span class="sw" style="background:${C.tool}"></span>tool call</span>
+        <span class="lg"><span class="sw" style="background:${C.ckpt};border-radius:50%"></span>checkpoint (WAL)</span>
+        <span class="lg"><span class="sw" style="background:${C.err}"></span>error / failed</span></div></div>
+    <div class="section-title">Full history</div><div class="hist">${hist}</div>`;
+}
+function flowGraph(t) {
+  const parts = []; let prevNode = false;
+  for (const s of t.steps) {
+    const info = stepInfo(s);
+    if (info.kind === "ckpt") { parts.push(`<span class="fckpt">✓ ${esc(info.sub)} → WAL</span>`); prevNode=false; continue; }
+    if (prevNode) parts.push(`<span class="farrow">→</span>`);
+    parts.push(`<span class="fnode ${info.kind}"><span class="fi">${info.icon}</span><span><span class="ft">${esc(info.label)}</span> <span class="fs">${esc(info.sub)}</span></span></span>`);
+    prevNode = true;
+  }
+  const done = t.status==="Completed" ? `<span class="farrow">→</span><span class="fend">✓ completed</span>` : (t.status&&t.status.Failed!==undefined) ? `<span class="farrow">→</span><span class="fend" style="background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.4);color:#fecaca">✕ failed</span>` : "";
+  return `<div class="flow">${parts.join("")}${done}</div>`;
+}
+
+/* ---------- tooltip + live ---------- */
+const tip = document.getElementById("tip");
+function showTip(ev, enc){ const p=JSON.parse(decodeURIComponent(enc)); tip.innerHTML=`<div class="t">${p[0]}</div><div class="l">${p[1]}</div>${p[2]?`<div class="l">${p[2]}</div>`:""}`; tip.style.display="block"; tip.style.left=Math.min(ev.clientX+14,window.innerWidth-310)+"px"; tip.style.top=(ev.clientY+14)+"px"; }
+function hideTip(){ tip.style.display="none"; }
+document.getElementById("live").addEventListener("click", ()=>{ LIVE=!LIVE; const e=document.getElementById("live"); e.classList.toggle("off",!LIVE); document.getElementById("live-t").textContent=LIVE?"live":"paused"; });
+
+load();
+setInterval(()=>{ if(LIVE) load(); }, 4000);
+</script>
+</body>
+</html>

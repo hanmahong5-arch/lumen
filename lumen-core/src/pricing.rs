@@ -48,7 +48,9 @@ const PRICING_TABLE: &[(&str, f64, f64)] = &[
     // Mistral
     ("mistral-large", 2.0, 6.0),
     ("mistral-small", 0.20, 0.60),
-    // DeepSeek
+    // DeepSeek (deepseek-chat is the V3 chat endpoint — same pricing)
+    ("deepseek-chat", 0.27, 1.10),
+    ("deepseek-reasoner", 0.55, 2.19),
     ("deepseek-v3", 0.27, 1.10),
     ("deepseek-r1", 0.55, 2.19),
 ];
