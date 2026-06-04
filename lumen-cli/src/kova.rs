@@ -805,10 +805,17 @@ fn render_value(value: &Value) -> String {
     match value {
         Value::Array(a) => render_rows(a),
         Value::Object(map) => {
-            if let Some((key, arr)) = map
-                .iter()
-                .find_map(|(k, v)| v.as_array().map(|a| (k.as_str(), a)))
-            {
+            // Envelope/table mode is for LIST responses ({total, items:[...]})
+            // with no nested objects. A response that contains nested objects is
+            // a structured detail view (e.g. GET /config) — render it whole as
+            // pretty JSON so fields like `validation` / `auth` aren't dropped.
+            let array_field = if map.values().any(Value::is_object) {
+                None
+            } else {
+                map.iter()
+                    .find_map(|(k, v)| v.as_array().map(|a| (k.as_str(), a)))
+            };
+            if let Some((key, arr)) = array_field {
                 let mut out = String::new();
                 let meta: Vec<String> = map
                     .iter()
@@ -1282,6 +1289,31 @@ mod tests {
         let plan = KovaCommand::AgentGet("x".into()).to_request();
         let out = render_result(&plan, 404, &json!({"error": "agent not found"}));
         assert_eq!(out, "✗ 404 agent not found");
+    }
+
+    #[test]
+    fn render_config_detail_object_shows_nested_fields() {
+        // A response with nested objects (GET /config) must render whole as JSON,
+        // not collapse to the `features` array envelope — else `lumen kova config`
+        // would drop the validation/auth posture (the whole point of the verb).
+        let plan = KovaCommand::Config.to_request();
+        let out = render_result(
+            &plan,
+            200,
+            &json!({
+                "profile": "production",
+                "features": ["llm", "wal-compaction"],
+                "auth": {"enforced": true},
+                "validation": {"ok": false, "errors": ["auth open"], "warnings": []}
+            }),
+        );
+        assert!(
+            out.contains("validation"),
+            "validation must be shown: {out}"
+        );
+        assert!(out.contains("auth"), "{out}");
+        assert!(out.contains("\"ok\""), "{out}");
+        assert!(out.contains("profile"), "{out}");
     }
 
     #[test]
