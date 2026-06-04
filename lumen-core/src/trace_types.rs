@@ -1,7 +1,8 @@
 //! Vendored Agent execution trace types.
 //!
 //! vendored from 2b-svc-kova/kova-types/src/trace.rs (v0.2.0), keep in sync
-//! (last synced 2026-06-01: added `AgentTrace::schema_version`)
+//! (last synced 2026-06-04: added `TraceStep::cost_usd`; 2026-06-01: added
+//! `AgentTrace::schema_version`)
 //!
 //! Lumen consumes Kova's `AgentTrace`/`TraceStep`/`TraceStepType`/`TraceStatus`
 //! (and their `TokenUsage` dependency) purely as data read back from trace JSON
@@ -108,6 +109,13 @@ pub struct TraceStep {
     pub duration_ms: u64,
     /// Token usage for this step (only for LLM calls).
     pub tokens: Option<TokenUsage>,
+    /// Estimated USD cost of this step (LLM calls only; `None` otherwise).
+    ///
+    /// `Some` only on priced LLM steps; `None` for tool/checkpoint/error steps,
+    /// unpriced models, and any trace written before this field existed.
+    /// `#[serde(default)]` keeps that legacy step JSON readable.
+    #[serde(default)]
+    pub cost_usd: Option<f64>,
     /// Arbitrary key-value metadata.
     pub metadata: Vec<(String, String)>,
 }
@@ -282,5 +290,27 @@ mod tests {
         assert_eq!(trace.status, TraceStatus::Completed);
         assert_eq!(trace.total_tokens.total(), 150);
         assert_eq!(trace.completed_at_ms, Some(1250));
+        // Legacy step JSON (no cost_usd) → serde default None.
+        assert_eq!(trace.steps[0].cost_usd, None);
+    }
+
+    #[test]
+    fn trace_step_cost_usd_roundtrips() {
+        // A step written by the post-A2 producer carries cost_usd; it must
+        // survive a deserialize→serialize→deserialize round-trip.
+        let json = r#"{
+            "step_num": 0,
+            "step_type": {"LlmCall": {"model": "deepseek-chat", "finish_reason": "stop"}},
+            "started_at_ms": 10,
+            "duration_ms": 120,
+            "tokens": {"prompt_tokens": 287, "completion_tokens": 2},
+            "cost_usd": 0.0001234,
+            "metadata": []
+        }"#;
+        let step: TraceStep = serde_json::from_str(json).unwrap();
+        assert_eq!(step.cost_usd, Some(0.0001234));
+        let reser = serde_json::to_string(&step).unwrap();
+        let back: TraceStep = serde_json::from_str(&reser).unwrap();
+        assert_eq!(back.cost_usd, Some(0.0001234));
     }
 }

@@ -7,8 +7,11 @@
 //! 2. **Cost** — Real-time LLM token/USD tracking and aggregation
 //! 3. **Guard** — Loop detection and cost limits
 
+pub mod causal_types;
 pub mod cost;
 pub mod error;
+pub mod lifecycle;
+pub mod lifecycle_builder;
 pub mod pricing;
 pub mod replay;
 pub mod trace;

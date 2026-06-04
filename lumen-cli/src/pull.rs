@@ -43,6 +43,12 @@ pub struct PullSummary {
     pub written: usize,
     /// Ids that failed to fetch/write and were skipped (not fatal).
     pub skipped: Vec<String>,
+    /// `--deep`: number of `{id}.causal.json` sidecars written.
+    pub causal_written: usize,
+    /// `--deep`: number of `{id}.workflow.json` sidecars written.
+    pub workflow_written: usize,
+    /// `--deep`: per-sidecar failures (`"{id}.causal: <msg>"`); non-fatal.
+    pub sidecar_skipped: Vec<String>,
 }
 
 /// Default limit for `lumen pull --limit` (number of traces to fetch).
@@ -69,6 +75,46 @@ pub trait TraceFetcher {
     /// # Errors
     /// Returns a message when the trace can't be fetched.
     fn fetch_trace(&self, trace_id: &str) -> Result<Vec<u8>, String>;
+
+    /// Fetch the `format=causal` stream for `agent_id`
+    /// (`GET /agents/{id}/history?format=causal`). `Ok(None)` means the server
+    /// has nothing for this agent (e.g. 404) — not an error.
+    ///
+    /// Default is `Ok(None)` so non-HTTP fetchers (test stubs) opt in only when
+    /// they care about the deep sidecars.
+    ///
+    /// # Errors
+    /// Returns a message on a transport/HTTP error other than 404.
+    fn fetch_causal(&self, _agent_id: &str) -> Result<Option<Vec<u8>>, String> {
+        Ok(None)
+    }
+
+    /// Fetch a workflow run detail (`GET /workflows/runs/{id}`). `Ok(None)` for
+    /// a 404 (the run isn't a workflow / not found).
+    ///
+    /// # Errors
+    /// Returns a message on a transport/HTTP error other than 404.
+    fn fetch_workflow(&self, _workflow_id: u64) -> Result<Option<Vec<u8>>, String> {
+        Ok(None)
+    }
+
+    /// Fetch a swarm delegation graph (`GET /swarm/{id}/graph`). `Ok(None)` for
+    /// a 404.
+    ///
+    /// # Errors
+    /// Returns a message on a transport/HTTP error other than 404.
+    fn fetch_swarm_graph(&self, _swarm_id: &str) -> Result<Option<Vec<u8>>, String> {
+        Ok(None)
+    }
+
+    /// Fetch a swarm execution trace (`GET /swarm/{id}/trace`). `Ok(None)` for
+    /// a 404. Used to merge per-agent token counts into the graph nodes.
+    ///
+    /// # Errors
+    /// Returns a message on a transport/HTTP error other than 404.
+    fn fetch_swarm_trace(&self, _swarm_id: &str) -> Result<Option<Vec<u8>>, String> {
+        Ok(None)
+    }
 }
 
 /// Parse the `GET /api/v1/traces` response body into a list of trace ids.
@@ -106,7 +152,9 @@ fn validate_trace_body(trace_id: &str, body: &[u8]) -> Result<(), String> {
         serde_json::from_slice(body).map_err(|e| format!("invalid trace JSON: {e}"))?;
     match value.get("trace_id").and_then(|v| v.as_str()) {
         Some(id) if id == trace_id => Ok(()),
-        Some(other) => Err(format!("response trace_id `{other}` != requested `{trace_id}`")),
+        Some(other) => Err(format!(
+            "response trace_id `{other}` != requested `{trace_id}`"
+        )),
         None => Err("response had no string trace_id".to_string()),
     }
 }
@@ -131,6 +179,34 @@ pub fn pull_into(
     trace_dir: &Path,
     limit: usize,
 ) -> Result<PullSummary, PullError> {
+    pull_into_inner(fetcher, trace_dir, limit, false)
+}
+
+/// Like [`pull_into`] but also fetches the deep lifecycle sidecars for each
+/// trace (`{id}.causal.json` / `{id}.workflow.json`), so `lumen export` can
+/// render the full lifecycle offline. Per-sidecar failures are non-fatal and
+/// recorded in [`PullSummary::sidecar_skipped`].
+///
+/// Note: the swarm sidecar (`{id}.swarm.json`) is **not** written here — a
+/// swarm id is not derivable from an agent trace, so it is fetched on demand by
+/// `lumen export --swarm <id>` instead. (Documented deferral.)
+///
+/// # Errors
+/// Same as [`pull_into`] (list/dir failures abort; per-trace failures skip).
+pub fn pull_into_deep(
+    fetcher: &dyn TraceFetcher,
+    trace_dir: &Path,
+    limit: usize,
+) -> Result<PullSummary, PullError> {
+    pull_into_inner(fetcher, trace_dir, limit, true)
+}
+
+fn pull_into_inner(
+    fetcher: &dyn TraceFetcher,
+    trace_dir: &Path,
+    limit: usize,
+    deep: bool,
+) -> Result<PullSummary, PullError> {
     let ids = fetcher.list_trace_ids(limit).map_err(PullError::List)?;
 
     let mut summary = PullSummary {
@@ -149,7 +225,12 @@ pub fn pull_into(
     for (idx, id) in ids.into_iter().enumerate() {
         eprintln!("  [{}/{}] {}", idx + 1, total, id);
         match fetch_and_write_one(fetcher, trace_dir, &id) {
-            Ok(()) => summary.written += 1,
+            Ok(body) => {
+                summary.written += 1;
+                if deep {
+                    write_sidecars(fetcher, trace_dir, &id, &body, &mut summary);
+                }
+            }
             Err(msg) => {
                 eprintln!("\x1b[33mwarning: skipping trace {id}: {msg}\x1b[0m");
                 summary.skipped.push(id);
@@ -158,6 +239,74 @@ pub fn pull_into(
     }
 
     Ok(summary)
+}
+
+/// `--deep`: fetch + write the causal/workflow sidecars next to `{id}.json`.
+///
+/// Keys are derived from the just-written trace body: causal by `agent_id`,
+/// workflow by `task_id` (only when non-zero — `0` is a standalone agent run,
+/// not a workflow). Each sidecar is independent; a failure records into
+/// `summary.sidecar_skipped` and never aborts the pull.
+fn write_sidecars(
+    fetcher: &dyn TraceFetcher,
+    trace_dir: &Path,
+    trace_id: &str,
+    trace_body: &[u8],
+    summary: &mut PullSummary,
+) {
+    let value: serde_json::Value = match serde_json::from_slice(trace_body) {
+        Ok(v) => v,
+        Err(e) => {
+            summary
+                .sidecar_skipped
+                .push(format!("{trace_id}.sidecars: trace body not JSON: {e}"));
+            return;
+        }
+    };
+    let agent_id = value.get("agent_id").and_then(|v| v.as_str());
+    let task_id = value.get("task_id").and_then(serde_json::Value::as_u64);
+
+    // Causal sidecar (by agent_id).
+    if let Some(agent_id) = agent_id {
+        match fetcher.fetch_causal(agent_id) {
+            Ok(Some(bytes)) => match write_sidecar(trace_dir, trace_id, "causal", &bytes) {
+                Ok(()) => summary.causal_written += 1,
+                Err(e) => summary
+                    .sidecar_skipped
+                    .push(format!("{trace_id}.causal: {e}")),
+            },
+            Ok(None) => {}
+            Err(e) => summary
+                .sidecar_skipped
+                .push(format!("{trace_id}.causal: {e}")),
+        }
+    }
+
+    // Workflow sidecar (by task_id, only when this run IS a workflow).
+    if let Some(wid) = task_id.filter(|w| *w != 0) {
+        match fetcher.fetch_workflow(wid) {
+            Ok(Some(bytes)) => match write_sidecar(trace_dir, trace_id, "workflow", &bytes) {
+                Ok(()) => summary.workflow_written += 1,
+                Err(e) => summary
+                    .sidecar_skipped
+                    .push(format!("{trace_id}.workflow: {e}")),
+            },
+            Ok(None) => {}
+            Err(e) => summary
+                .sidecar_skipped
+                .push(format!("{trace_id}.workflow: {e}")),
+        }
+    }
+}
+
+/// Write `{trace_dir}/{trace_id}.{kind}.json` atomically (tmp + rename).
+fn write_sidecar(trace_dir: &Path, trace_id: &str, kind: &str, bytes: &[u8]) -> Result<(), String> {
+    let final_path = trace_dir.join(format!("{trace_id}.{kind}.json"));
+    let tmp_path = trace_dir.join(format!(".{trace_id}.{kind}.json.tmp"));
+    std::fs::write(&tmp_path, bytes).map_err(|e| format!("write {}: {e}", tmp_path.display()))?;
+    std::fs::rename(&tmp_path, &final_path)
+        .map_err(|e| format!("rename to {}: {e}", final_path.display()))?;
+    Ok(())
 }
 
 /// Fetch a single trace, validate it, and write it atomically-ish.
@@ -169,7 +318,7 @@ fn fetch_and_write_one(
     fetcher: &dyn TraceFetcher,
     trace_dir: &Path,
     trace_id: &str,
-) -> Result<(), String> {
+) -> Result<Vec<u8>, String> {
     let body = fetcher.fetch_trace(trace_id)?;
     validate_trace_body(trace_id, &body)?;
 
@@ -178,7 +327,7 @@ fn fetch_and_write_one(
     std::fs::write(&tmp_path, &body).map_err(|e| format!("write {}: {e}", tmp_path.display()))?;
     std::fs::rename(&tmp_path, &final_path)
         .map_err(|e| format!("rename to {}: {e}", final_path.display()))?;
-    Ok(())
+    Ok(body)
 }
 
 /// Production [`TraceFetcher`] backed by a synchronous `ureq` HTTP client.
@@ -200,9 +349,7 @@ impl HttpFetcher {
     /// `base_url` is trimmed so path joining is predictable.
     #[must_use]
     pub fn new(base_url: &str, api_key: Option<String>) -> Self {
-        let agent = ureq::AgentBuilder::new()
-            .timeout(REQUEST_TIMEOUT)
-            .build();
+        let agent = ureq::AgentBuilder::new().timeout(REQUEST_TIMEOUT).build();
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key,
@@ -216,14 +363,33 @@ impl HttpFetcher {
         if let Some(ref key) = self.api_key {
             req = req.set(API_KEY_HEADER, key);
         }
-        let resp = req
-            .call()
-            .map_err(|e| describe_ureq_error(&e))?;
+        let resp = req.call().map_err(|e| describe_ureq_error(&e))?;
         let mut buf = Vec::new();
         resp.into_reader()
             .read_to_end(&mut buf)
             .map_err(|e| format!("reading response body: {e}"))?;
         Ok(buf)
+    }
+
+    /// GET that treats `404`/`501` as "no data" (`Ok(None)`) rather than an
+    /// error — for optional sidecars (a run that isn't a workflow 404s
+    /// `/workflows/runs/{id}`; a control-plane-only server 501s on WAL reads).
+    fn get_opt(&self, url: &str) -> Result<Option<Vec<u8>>, String> {
+        let mut req = self.agent.get(url);
+        if let Some(ref key) = self.api_key {
+            req = req.set(API_KEY_HEADER, key);
+        }
+        match req.call() {
+            Ok(resp) => {
+                let mut buf = Vec::new();
+                resp.into_reader()
+                    .read_to_end(&mut buf)
+                    .map_err(|e| format!("reading response body: {e}"))?;
+                Ok(Some(buf))
+            }
+            Err(ureq::Error::Status(404 | 501, _)) => Ok(None),
+            Err(e) => Err(describe_ureq_error(&e)),
+        }
     }
 }
 
@@ -240,6 +406,33 @@ impl TraceFetcher for HttpFetcher {
         let safe_id = trace_id.replace('/', "%2F");
         let url = format!("{}/api/v1/traces/{safe_id}", self.base_url);
         self.get(&url)
+    }
+
+    fn fetch_causal(&self, agent_id: &str) -> Result<Option<Vec<u8>>, String> {
+        let safe = agent_id.replace('/', "%2F");
+        // Unpaged (no `limit`) → bare `[CausalEvent]` array.
+        let url = format!(
+            "{}/api/v1/agents/{safe}/history?format=causal",
+            self.base_url
+        );
+        self.get_opt(&url)
+    }
+
+    fn fetch_workflow(&self, workflow_id: u64) -> Result<Option<Vec<u8>>, String> {
+        let url = format!("{}/api/v1/workflows/runs/{workflow_id}", self.base_url);
+        self.get_opt(&url)
+    }
+
+    fn fetch_swarm_graph(&self, swarm_id: &str) -> Result<Option<Vec<u8>>, String> {
+        let safe = swarm_id.replace('/', "%2F");
+        let url = format!("{}/api/v1/swarm/{safe}/graph", self.base_url);
+        self.get_opt(&url)
+    }
+
+    fn fetch_swarm_trace(&self, swarm_id: &str) -> Result<Option<Vec<u8>>, String> {
+        let safe = swarm_id.replace('/', "%2F");
+        let url = format!("{}/api/v1/swarm/{safe}/trace", self.base_url);
+        self.get_opt(&url)
     }
 }
 
@@ -266,6 +459,8 @@ mod tests {
     struct StubFetcher {
         list: Result<Vec<String>, String>,
         traces: HashMap<String, Result<Vec<u8>, String>>,
+        causal: HashMap<String, Result<Option<Vec<u8>>, String>>,
+        workflows: HashMap<u64, Result<Option<Vec<u8>>, String>>,
         fetched: RefCell<Vec<String>>,
         /// Last `limit` value passed to `list_trace_ids`.
         last_limit: RefCell<usize>,
@@ -276,6 +471,8 @@ mod tests {
             Self {
                 list: Ok(ids.iter().map(|s| (*s).to_string()).collect()),
                 traces: HashMap::new(),
+                causal: HashMap::new(),
+                workflows: HashMap::new(),
                 fetched: RefCell::new(Vec::new()),
                 last_limit: RefCell::new(0),
             }
@@ -289,6 +486,18 @@ mod tests {
 
         fn with_fetch_error(mut self, id: &str, msg: &str) -> Self {
             self.traces.insert(id.to_string(), Err(msg.to_string()));
+            self
+        }
+
+        fn with_causal(mut self, agent_id: &str, body: &str) -> Self {
+            self.causal
+                .insert(agent_id.to_string(), Ok(Some(body.as_bytes().to_vec())));
+            self
+        }
+
+        fn with_workflow(mut self, workflow_id: u64, body: &str) -> Self {
+            self.workflows
+                .insert(workflow_id, Ok(Some(body.as_bytes().to_vec())));
             self
         }
     }
@@ -305,6 +514,17 @@ mod tests {
                 .get(trace_id)
                 .cloned()
                 .unwrap_or_else(|| Err("no such trace in stub".to_string()))
+        }
+
+        fn fetch_causal(&self, agent_id: &str) -> Result<Option<Vec<u8>>, String> {
+            self.causal.get(agent_id).cloned().unwrap_or(Ok(None))
+        }
+
+        fn fetch_workflow(&self, workflow_id: u64) -> Result<Option<Vec<u8>>, String> {
+            self.workflows
+                .get(&workflow_id)
+                .cloned()
+                .unwrap_or(Ok(None))
         }
     }
 
@@ -357,8 +577,10 @@ mod tests {
             let p = dir.join(format!("{id}.json"));
             assert!(p.is_file(), "{} should exist", p.display());
             let bytes = std::fs::read(&p).unwrap();
-            assert!(extract_trace_ids(format!("[{}]", String::from_utf8(bytes).unwrap()).as_bytes())
-                .is_ok());
+            assert!(
+                extract_trace_ids(format!("[{}]", String::from_utf8(bytes).unwrap()).as_bytes())
+                    .is_ok()
+            );
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -411,11 +633,60 @@ mod tests {
         let fetcher = StubFetcher {
             list: Err("connection refused".to_string()),
             traces: HashMap::new(),
+            causal: HashMap::new(),
+            workflows: HashMap::new(),
             fetched: RefCell::new(Vec::new()),
             last_limit: RefCell::new(0),
         };
         let err = pull_into(&fetcher, &dir, DEFAULT_PULL_LIMIT).unwrap_err();
         assert!(matches!(err, PullError::List(_)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn deep_pull_writes_causal_and_workflow_sidecars() {
+        let dir = tmp_dir("deep");
+        // "wf" is a workflow run (task_id != 0) so its workflow sidecar is
+        // fetched; "ag" is a plain agent run (task_id 0) so only causal.
+        let wf_trace = r#"{"trace_id":"wf","agent_id":"flow-agent","task_id":77,"steps":[],"status":"Completed","total_tokens":{"prompt_tokens":0,"completion_tokens":0},"total_cost_usd":0.0,"started_at_ms":1}"#;
+        let ag_trace = r#"{"trace_id":"ag","agent_id":"tool-agent","task_id":0,"steps":[],"status":"Completed","total_tokens":{"prompt_tokens":0,"completion_tokens":0},"total_cost_usd":0.0,"started_at_ms":1}"#;
+        let fetcher = StubFetcher::new(&["wf", "ag"])
+            .with_trace("wf", wf_trace)
+            .with_trace("ag", ag_trace)
+            .with_causal(
+                "flow-agent",
+                r#"[{"event_id":0,"record_type":"WorkflowStart"}]"#,
+            )
+            .with_causal(
+                "tool-agent",
+                r#"[{"event_id":0,"record_type":"AgentDirective","caused_by":null}]"#,
+            )
+            .with_workflow(77, r#"{"workflow_id":77,"status":"completed","steps":[]}"#);
+
+        let summary = pull_into_deep(&fetcher, &dir, DEFAULT_PULL_LIMIT).unwrap();
+        assert_eq!(summary.written, 2);
+        // Both agents had a causal sidecar; only the workflow run had a wf sidecar.
+        assert_eq!(summary.causal_written, 2);
+        assert_eq!(summary.workflow_written, 1);
+        assert!(summary.sidecar_skipped.is_empty());
+        assert!(dir.join("wf.causal.json").is_file());
+        assert!(dir.join("wf.workflow.json").is_file());
+        assert!(dir.join("ag.causal.json").is_file());
+        // The plain agent run (task_id 0) gets NO workflow sidecar.
+        assert!(!dir.join("ag.workflow.json").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn shallow_pull_writes_no_sidecars() {
+        let dir = tmp_dir("shallow");
+        let fetcher = StubFetcher::new(&["ag"])
+            .with_trace("ag", &trace_json("ag"))
+            .with_causal("a", r#"[]"#);
+        let summary = pull_into(&fetcher, &dir, DEFAULT_PULL_LIMIT).unwrap();
+        assert_eq!(summary.written, 1);
+        assert_eq!(summary.causal_written, 0);
+        assert!(!dir.join("ag.causal.json").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

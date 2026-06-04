@@ -187,6 +187,7 @@
   <nav class="tabs">
     <button id="tab-overview" class="on" onclick="setView('overview')">Overview</button>
     <button id="tab-traces" onclick="setView('traces')">Traces</button>
+    <button id="tab-lifecycle" onclick="setView('lifecycle')">Lifecycle</button>
     <button id="tab-metrics" onclick="setView('metrics')">Metrics</button>
     <button id="tab-terminal" onclick="setView('terminal')">Terminal</button>
   </nav>
@@ -279,6 +280,164 @@ function donut(items, label) {
     <div class="legend">${items.map(i=>`<div class="lg"><span class="sw" style="background:${i.color}"></span>${esc(i.label)}<span class="lv">${i.value}</span></div>`).join("")}</div></div>`;
 }
 
+<!-- SHARED_RENDER_START -->
+/* ---------- lifecycle render (SELF-CONTAINED — single-sourced between the
+   SHARED_RENDER markers; extracted verbatim into the offline export HTML, so it
+   must NOT reference anything outside this block: own helpers, own palette, own
+   colors as hex. Operates purely on a Lifecycle JSON object `lc`). ---------- */
+const LCP = { panel2:"#161b27", border:"#1f2533", border2:"#2a3142", fg:"#e6e9ef",
+  muted:"#8b93a7", bg:"#0b0e14", ok:"#22c55e", err:"#ef4444", llm:"#3b82f6",
+  recovery:"#ec4899", workflow:"#22d3ee", swarm:"#f59e0b" };
+const LC_LANES = [
+  {id:"Llm", label:"LLM", color:"#3b82f6"},
+  {id:"Tool", label:"Tool", color:"#8b5cf6"},
+  {id:"Wait", label:"Wait", color:"#64748b"},
+  {id:"Workflow", label:"Workflow", color:"#22d3ee"},
+  {id:"Swarm", label:"Swarm", color:"#f59e0b"},
+  {id:"Recovery", label:"Recovery", color:"#ec4899"},
+];
+const lcEsc = s => String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const lcClip = (s,n) => { s=String(s==null?"":s); return s.length>n ? s.slice(0,n-1)+"…" : s; };
+const lcShort = s => lcClip(s,16);
+const lcUsd = n => { const v=Number(n)||0; return "$"+v.toFixed(v<0.01?5:4); };
+const lcDur = ms => { ms=Number(ms)||0; return ms<1000?Math.round(ms)+"ms":ms<60000?(ms/1000).toFixed(ms<10000?2:1)+"s":(ms/60000).toFixed(1)+"m"; };
+const lcTok = n => { n=Number(n)||0; return n>=1000?(n/1000).toFixed(1)+"k":String(n); };
+
+// Time-accurate swimlane (Gantt) over the whole recovery chain, lane-grouped.
+function swimlane(lc){
+  const nodes = (lc&&lc.timeline)||[];
+  if(!nodes.length) return '<div class="empty">No timeline steps recorded.</div>';
+  let t0=Infinity,t1=-Infinity;
+  for(const n of nodes){ t0=Math.min(t0,n.t_start); t1=Math.max(t1,n.t_start+(n.dur_ms||0)); }
+  const span=Math.max(t1-t0,1), LBL=120, H=34;
+  const present = LC_LANES.filter(l=> nodes.some(n=>n.lane===l.id));
+  const rows = present.map(l=>{
+    const bars = nodes.filter(n=>n.lane===l.id).map(n=>{
+      const left=(n.t_start-t0)/span, width=Math.max((n.dur_ms||0)/span,0.006);
+      const isPoint=(n.dur_ms||0)===0, st=n.status||"ok";
+      const bg = st==="error" ? LCP.err : l.color;
+      const tip = `${lcEsc(n.phase)} · +${lcDur(n.t_start-t0)} · ${lcDur(n.dur_ms)}`+
+        `${n.tokens?` · ${lcTok(n.tokens)} tok`:""}${n.cost_usd!=null?` · ${lcUsd(n.cost_usd)}`:""} · ${lcEsc(st)}`;
+      const posLeft = `calc(${LBL}px + (100% - ${LBL}px) * ${left})`;
+      const common = `position:absolute;left:${posLeft};overflow:hidden;white-space:nowrap;color:#fff;`+
+        `box-shadow:0 1px 3px rgba(0,0,0,.3);`;
+      if(isPoint) return `<div title="${tip}" style="${common}top:9px;width:11px;height:11px;border-radius:50%;background:${bg};border:2px solid ${LCP.bg}"></div>`;
+      return `<div title="${tip}" style="${common}top:8px;height:18px;width:calc((100% - ${LBL}px) * ${width});min-width:3px;`+
+        `border-radius:5px;background:${bg};font-size:10px;padding:0 6px;display:flex;align-items:center">${lcEsc(lcShort(n.phase))}</div>`;
+    }).join("");
+    return `<div style="position:relative;height:${H}px;border-bottom:1px solid ${LCP.border}">`+
+      `<div style="position:absolute;left:0;top:9px;width:${LBL-8}px;color:${l.color};font-weight:700;font-size:11px">${lcEsc(l.label)}</div>${bars}</div>`;
+  }).join("");
+  const dividers = nodes.filter(n=>n.lane==="Recovery").map(n=>{
+    const left=(n.t_start-t0)/span;
+    return `<div title="crash → resume" style="position:absolute;left:calc(${LBL}px + (100% - ${LBL}px) * ${left});top:0;bottom:0;border-left:2px dashed ${LCP.recovery}"></div>`;
+  }).join("");
+  const TICKS=6; let ruler="";
+  for(let i=0;i<=TICKS;i++){const p=i/TICKS; ruler+=`<div style="position:absolute;left:calc(${LBL}px + (100% - ${LBL}px) * ${p});top:0;transform:translateX(-50%);color:${LCP.muted};font-size:10px">${lcDur(span*p)}</div>`;}
+  return `<div class="panel" style="position:relative">`+
+    `<div style="position:relative;height:16px;margin-bottom:6px;border-bottom:1px dashed ${LCP.border2}">${ruler}</div>`+
+    `<div style="position:relative">${rows}${dividers}</div></div>`;
+}
+
+// Hand-rolled causal DAG: 2-pass layered layout (BFS rank from caused_by roots,
+// sorted by id within rank), cubic-bezier edges + one arrowhead marker.
+function causalDag(lc){
+  const g=(lc&&lc.causal)||{nodes:[],edges:[]}, nodes=g.nodes||[], edges=g.edges||[];
+  if(!nodes.length) return '<div class="empty">No causal events recorded for this run.</div>';
+  const parent=new Map(); for(const e of edges) parent.set(e.to, e.from);
+  const sorted=[...nodes].sort((a,b)=>a.id-b.id);
+  const rank=new Map();
+  for(const n of sorted){ const p=parent.get(n.id); rank.set(n.id, (p!=null&&rank.has(p))?rank.get(p)+1:0); }
+  const ranks=new Map();
+  for(const n of sorted){ const r=rank.get(n.id); if(!ranks.has(r)) ranks.set(r,[]); ranks.get(r).push(n); }
+  const maxRank=Math.max(0,...ranks.keys()); let maxCol=1; for(const a of ranks.values()) maxCol=Math.max(maxCol,a.length);
+  const COLW=210, ROWH=64, NW=180, NH=42, PADX=16, PADY=16;
+  const pos=new Map();
+  for(const [r,arr] of ranks) arr.forEach((n,i)=> pos.set(n.id,{x:PADX+r*COLW, y:PADY+i*ROWH}));
+  const W=PADX*2+(maxRank+1)*COLW, Hh=PADY*2+maxCol*ROWH;
+  const catColor = rt => { rt=String(rt||"");
+    if(/Result/.test(rt)) return LCP.ok;
+    if(/Directive|Tool/.test(rt)) return "#8b5cf6";
+    if(/Workflow|Step|Branch|Await/.test(rt)) return LCP.workflow;
+    if(/Swarm|Delegation|Handoff/.test(rt)) return LCP.swarm;
+    return LCP.llm; };
+  const epaths = edges.map(e=>{ const a=pos.get(e.from), b=pos.get(e.to); if(!a||!b) return "";
+    const x1=a.x+NW, y1=a.y+NH/2, x2=b.x, y2=b.y+NH/2, mx=(x1+x2)/2;
+    return `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="${LCP.llm}" stroke-width="1.5" marker-end="url(#lcArrow)" opacity="0.8"/>`;
+  }).join("");
+  const rects = sorted.map(n=>{ const p=pos.get(n.id), col=catColor(n.record_type);
+    return `<g><rect x="${p.x}" y="${p.y}" width="${NW}" height="${NH}" rx="8" fill="${LCP.panel2}" stroke="${col}" stroke-width="1.5"/>`+
+      `<text x="${p.x+10}" y="${p.y+17}" fill="${col}" font-size="11" font-weight="700">${lcEsc(lcClip(n.record_type,20))}</text>`+
+      `<text x="${p.x+10}" y="${p.y+33}" fill="${LCP.muted}" font-size="10">${lcEsc(lcClip(n.summary,24))}</text>`+
+      `<title>#${n.id} ${lcEsc(n.record_type)} · ${lcEsc(n.summary)}</title></g>`;
+  }).join("");
+  const note = edges.length ? "" : `<div class="empty" style="margin-top:8px">Events present, but no causal edges — a pure-text / single-step run.</div>`;
+  return `<div class="panel" style="overflow-x:auto"><svg width="${W}" height="${Hh}" style="min-width:100%">`+
+    `<defs><marker id="lcArrow" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L8,3 L0,6 Z" fill="${LCP.llm}"/></marker></defs>`+
+    `${epaths}${rects}</svg>${note}</div>`;
+}
+
+// Crash→resume run pills (only when the chain has more than one run).
+function recoveryChain(lc){
+  const chain=(lc&&lc.recovery_chain)||[];
+  if(chain.length<=1) return "";
+  const pills = chain.map((id,i)=>{
+    const arrow = i>0 ? `<span title="crash → WAL replay → resume" style="color:${LCP.recovery};margin:0 8px;font-weight:700">⚡⟳</span>` : "";
+    return `${arrow}<span style="background:${LCP.panel2};border:1px solid ${LCP.border2};border-radius:20px;padding:5px 12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px">${lcEsc(lcShort(id))}</span>`;
+  }).join("");
+  return `<div class="panel" style="display:flex;align-items:center;flex-wrap:wrap;gap:4px">`+
+    `<span style="color:${LCP.muted};margin-right:8px">crash-recovery chain:</span>${pills}</div>`;
+}
+
+// Provenance + tamper-evidence badge.
+function lcProvenance(lc){
+  const p=(lc&&lc.provenance)||{sources:[],wal_hmac_note:""};
+  const chips=(p.sources||[]).map(s=>`<span style="background:rgba(91,157,255,.14);color:#9cc4ff;border-radius:6px;padding:2px 8px;font-size:11px;margin-right:6px">${lcEsc(s)}</span>`).join("");
+  const tamper=/HMAC|tamper/i.test(p.wal_hmac_note||"");
+  return `<div class="panel" style="display:flex;gap:12px;align-items:flex-start"><div style="font-size:22px">${tamper?"🛡️":"📄"}</div>`+
+    `<div><div style="font-weight:700;margin-bottom:3px">Provenance${tamper?` <span style="color:${LCP.ok};font-size:11px">· tamper-evident (SM3-HMAC)</span>`:""}</div>`+
+    `<div style="margin-bottom:6px">sources: ${chips||`<span style="color:${LCP.muted}">none</span>`}</div>`+
+    `<div style="color:${LCP.muted};font-size:11.5px;max-width:760px">${lcEsc(p.wal_hmac_note)}</div></div></div>`;
+}
+
+// Compose the full lifecycle view into `el` from a Lifecycle JSON object.
+function renderLifecycleInto(el, lc){
+  if(!lc){ el.innerHTML='<div class="empty">No lifecycle data.</div>'; return; }
+  const dur = lc.completed_ms ? (lc.completed_ms-lc.started_ms) : 0;
+  const sc = /complete/i.test(lc.status)?LCP.ok:/fail|error/i.test(lc.status)?LCP.err:LCP.llm;
+  const cards = `<div class="cards">`+
+    `<div class="card"><div class="k">status</div><div class="v" style="color:${sc}">${lcEsc(lc.status)}</div></div>`+
+    `<div class="card"><div class="k">duration</div><div class="v">${dur?lcDur(dur):"—"}</div></div>`+
+    `<div class="card"><div class="k">tokens</div><div class="v">${lcTok(lc.total_tokens)}</div></div>`+
+    `<div class="card"><div class="k">cost</div><div class="v">${lcUsd(lc.total_cost_usd)}</div></div>`+
+    `<div class="card"><div class="k">steps</div><div class="v">${(lc.timeline||[]).length}</div></div></div>`;
+  let wf="";
+  if((lc.workflow_steps||[]).length){
+    const rows=lc.workflow_steps.map(s=>`<div style="display:flex;gap:10px;padding:6px 0;border-bottom:1px solid ${LCP.border}">`+
+      `<span style="color:${LCP.workflow};font-family:monospace;width:42px">#${s.index}</span>`+
+      `<span style="width:120px;color:${LCP.muted}">${lcEsc(s.kind)}</span>`+
+      `<span style="flex:1">${lcEsc(lcClip(s.label,80))}</span>`+
+      `<span style="color:${LCP.muted}">${lcDur(s.dur_ms)}</span></div>`).join("");
+    wf=`<div class="section-title">Workflow steps</div><div class="panel">${rows}</div>`;
+  }
+  let sw="";
+  if(lc.swarm && (lc.swarm.nodes||[]).length){
+    const nodes=lc.swarm.nodes.map(n=>`<span style="background:${LCP.panel2};border:1px solid ${LCP.border2};border-radius:8px;padding:5px 10px;margin:3px;display:inline-block">`+
+      `<b>${lcEsc(n.id)}</b> <span style="color:${LCP.muted}">${lcEsc(n.agent_type)}</span> `+
+      `${(n.prompt_tokens||n.completion_tokens)?`<span style="color:${LCP.swarm}">${lcTok((n.prompt_tokens||0)+(n.completion_tokens||0))} tok</span>`:""}</span>`).join("");
+    const edges=(lc.swarm.edges||[]).map(e=>`<div style="color:${LCP.muted};font-size:12px">${lcEsc(e.from)} <span style="color:${LCP.swarm}">${lcEsc(e.edge_type)}→</span> ${lcEsc(e.to)}</div>`).join("");
+    sw=`<div class="section-title">Swarm delegations</div><div class="panel">${nodes}<div style="margin-top:10px">${edges}</div></div>`;
+  }
+  el.innerHTML = `<h2 style="margin:4px 0 2px">${lcEsc(lc.run_id)}</h2>`+
+    `<div style="color:${LCP.muted};margin-bottom:8px">${lc.agent_id?`agent <b style="color:${LCP.fg}">${lcEsc(lc.agent_id)}</b> · `:""}lifecycle</div>`+
+    cards + recoveryChain(lc)+
+    `<div class="section-title">Timeline (swimlane)</div>`+swimlane(lc)+
+    `<div class="section-title">Causal graph</div>`+causalDag(lc)+
+    wf + sw +
+    `<div class="section-title">Provenance</div>`+lcProvenance(lc);
+}
+<!-- SHARED_RENDER_END -->
+
 /* ---------- data ---------- */
 async function load() {
   try { TRACES = await (await fetch("/api/traces")).json(); } catch(e) { TRACES = []; }
@@ -319,8 +478,23 @@ function renderAlarmPill() {
   el.textContent = `⚠ ${ALARMS.length} alarm${ALARMS.length>1?"s":""}${crit?` · ${crit} crit`:""}`;
   el.title = ALARMS.map(a=>`${a.status}: ${a.name}`).join("\n");
 }
-function setView(v){ VIEW=v; for (const t of ["overview","traces","metrics","terminal"]) document.getElementById("tab-"+t).classList.toggle("on", v===t); render(); }
-function render(){ if (VIEW==="overview") renderOverview(); else if (VIEW==="traces") renderTraces(); else if (VIEW==="metrics") renderMetrics(); else if (VIEW==="terminal") renderTerminal(); }
+function setView(v){ VIEW=v; for (const t of ["overview","traces","lifecycle","metrics","terminal"]) document.getElementById("tab-"+t).classList.toggle("on", v===t); render(); }
+function render(){ if (VIEW==="overview") renderOverview(); else if (VIEW==="traces") renderTraces(); else if (VIEW==="lifecycle") renderLifecycle(); else if (VIEW==="metrics") renderMetrics(); else if (VIEW==="terminal") renderTerminal(); }
+
+// Lifecycle tab: the whole-run story for the SELECTED trace, drawn by the shared
+// render block (the same code the offline `lumen export` HTML uses).
+async function renderLifecycle(){
+  const root=document.getElementById("root");
+  if(!SELECTED){ root.innerHTML='<div class="empty" style="padding:48px">Select a trace in the <b>Traces</b> tab first, then open Lifecycle.</div>'; return; }
+  root.innerHTML='<div class="empty" style="padding:40px">Building lifecycle…</div>';
+  try{
+    const lc = await (await fetch("/api/traces/"+encodeURIComponent(SELECTED)+"/lifecycle")).json();
+    if(lc && lc.error){ root.innerHTML='<div class="empty" style="padding:48px">'+esc(lc.error)+'</div>'; return; }
+    const bar = `<div style="margin-bottom:14px"><a href="/export?id=${encodeURIComponent(SELECTED)}" target="_blank" style="color:var(--grad1);text-decoration:none">💾 Save this lifecycle as a self-contained HTML</a></div>`;
+    root.innerHTML='<div style="max-width:1180px;margin:0 auto">'+bar+'<div id="lc-body"></div></div>';
+    renderLifecycleInto(document.getElementById("lc-body"), lc);
+  }catch(e){ root.innerHTML='<div class="empty" style="padding:48px">Failed to load lifecycle: '+esc(String(e))+'</div>'; }
+}
 
 /* ---------- metrics (Netdata-backed) ---------- */
 // Aggregate a Netdata anomaly-bit body to a single 0–100 rate (mirror of
@@ -665,6 +839,8 @@ function renderDetail() {
     <h2 class="tid">${esc(t.trace_id)}</h2>
     <div class="sub">agent <b>${esc(t.agent_id)}</b> · task ${t.task_id} · schema v${t.schema_version}</div>
     <button class="deeplink" title="open the Metrics tab scoped to this run's [start, end] window" onclick="metricsForRun('${jsAttr(t.trace_id)}')">📈 view metrics for this run's window</button>
+    <button class="deeplink" title="open the full lifecycle view (swimlane + causal DAG + recovery)" onclick="SELECTED='${jsAttr(t.trace_id)}';setView('lifecycle')">🧬 lifecycle view</button>
+    <button class="deeplink" title="download a self-contained, offline lifecycle HTML for this run" onclick="window.open('/export?id='+encodeURIComponent('${jsAttr(t.trace_id)}'),'_blank')">💾 Save as HTML</button>
     <div class="cards">
       <div class="card"><div class="k">status</div><div class="v" style="color:${si.dot}">${esc(si.label)}</div></div>
       <div class="card"><div class="k">duration</div><div class="v">${fmtDur(total)}</div></div>

@@ -86,7 +86,20 @@ lumen dashboard --kova-url http://localhost:3010 --api-key sk-kova-…  # + Term
 lumen metrics --last 10m             # Headless kova metrics + ML anomaly snapshot
 lumen kova "agents"                  # Headless one-shot of a kova control verb
 lumen kova "agent foo delete" --yes  # …destructive verbs need --yes
+lumen pull --kova-url http://localhost:3010          # Pull trace JSON from a live Kova
+lumen pull --deep --kova-url http://localhost:3010   # …+ causal/workflow lifecycle sidecars
+lumen export <run> --trace-dir ./traces              # One run → self-contained offline lifecycle .html
+lumen export <run> --kova-url http://localhost:3010  # …fetch that run live first, then export
 ```
+
+## Lifecycle view & export
+
+The **Lifecycle tab** (and `lumen export`) tell an agent run's *whole story* in one view: a
+lane-grouped **swimlane** (timing/tokens/cost per step), a real **causal DAG** (directive→result
+edges from `format=causal`), **crash→recovery stitching** across the trace chain, **swarm
+delegations**, and a **provenance badge**. `lumen export <run>` writes a single **self-contained
+`.html`** (no server, no CDN) you can archive or share — the same render code the live dashboard uses.
+Run `lumen pull --deep` first (or pass `--kova-url`) so the causal/workflow sidecars are present.
 
 ## Metrics & ML anomaly (Netdata)
 

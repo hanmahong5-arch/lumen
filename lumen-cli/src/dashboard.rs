@@ -26,6 +26,7 @@ use std::time::Duration;
 
 use serde_json::json;
 
+use lumen_core::lifecycle::Lifecycle;
 use lumen_core::trace::TraceStore;
 
 use crate::kova::{ConsoleOutcome, HttpKovaClient, KovaControlClient, KovaStatus, run_line};
@@ -54,6 +55,53 @@ const DEFAULT_POINTS: u32 = 60;
 /// The single-page dashboard UI, embedded at compile time (offline-friendly,
 /// no CDN dependency — important on restricted networks).
 const INDEX_HTML: &str = include_str!("dashboard.html");
+
+/// The self-contained lifecycle-export shell (placeholders filled at render
+/// time). Embedded so `lumen export` produces a single offline `.html`.
+const LIFECYCLE_HTML: &str = include_str!("lifecycle.html");
+
+/// Markers bracketing the shared lifecycle-render JS in [`INDEX_HTML`]. The
+/// export extracts the block between them and injects it into [`LIFECYCLE_HTML`]
+/// so the live dashboard and the offline artifact render from ONE source.
+const SHARED_START: &str = "<!-- SHARED_RENDER_START -->";
+const SHARED_END: &str = "<!-- SHARED_RENDER_END -->";
+
+/// Extract the shared render JS between the [`SHARED_START`]/[`SHARED_END`]
+/// markers in `html` (exclusive of the markers themselves).
+fn extract_shared_js(html: &str) -> Option<&str> {
+    let start = html.find(SHARED_START)? + SHARED_START.len();
+    let rest = &html[start..];
+    let end = rest.find(SHARED_END)?;
+    Some(rest[..end].trim())
+}
+
+/// Render the self-contained lifecycle HTML for `lc` (a single offline file).
+///
+/// Substitutes the three [`LIFECYCLE_HTML`] placeholders: `__RUN_ID__` (HTML
+/// text), `// __SHARED_RENDER_BLOCK__` (the JS extracted from [`INDEX_HTML`]),
+/// and `__LIFECYCLE_JSON__` (the serialized lifecycle). The JSON is substituted
+/// LAST so any placeholder-looking text inside it stays literal, and `</` is
+/// escaped so an embedded `</script>` can't break out of the script tag.
+///
+/// Returns `None` if the markers are missing (a drift-guard test prevents that)
+/// or serialization fails.
+pub fn render_lifecycle_export(lc: &Lifecycle, run_id: &str) -> Option<String> {
+    let shared = extract_shared_js(INDEX_HTML)?;
+    let json = serde_json::to_string(lc).ok()?.replace("</", "<\\/");
+    let html = LIFECYCLE_HTML
+        .replace("__RUN_ID__", &html_escape_min(run_id))
+        .replace("// __SHARED_RENDER_BLOCK__", shared)
+        .replace("__LIFECYCLE_JSON__", &json);
+    Some(html)
+}
+
+/// Minimal HTML-text escaper for the run id placeholder.
+fn html_escape_min(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
 
 /// `(status_line, content_type, body)` — the shape every route returns.
 type Resp = (&'static str, &'static str, String);
@@ -310,8 +358,60 @@ fn route(
         ("GET", "/api/anomalies") => anomalies_response(netdata, query),
         ("GET", "/api/alarms") => alarms_response(netdata),
         ("GET", "/api/kova-status") => kova_status_response(kova),
+        ("GET", "/export") => export_response(trace_dir, query),
+        // `/api/traces/{id}/lifecycle` — the assembled lifecycle JSON for one run.
+        ("GET", p) if p.starts_with("/api/traces/") && p.ends_with("/lifecycle") => {
+            let id = &p["/api/traces/".len()..p.len() - "/lifecycle".len()];
+            lifecycle_response(trace_dir, id)
+        }
         ("POST", "/api/console") => console_response(kova, body),
         _ => ("404 Not Found", CT_TEXT, "not found".to_string()),
+    }
+}
+
+/// `GET /api/traces/{id}/lifecycle` — assemble the lifecycle for one run from
+/// disk (trace + recovery chain + sidecars) and return it as JSON. `404` with an
+/// `{error}` envelope when nothing is on disk for `id` (the UI shows it inline).
+fn lifecycle_response(trace_dir: &str, id: &str) -> Resp {
+    match crate::lifecycle_load::build_from_dir(std::path::Path::new(trace_dir), id) {
+        Some(lc) => match serde_json::to_string(&lc) {
+            Ok(j) => ok_json(j),
+            Err(e) => (
+                "500 Internal Server Error",
+                CT_TEXT,
+                format!("serialize error: {e}"),
+            ),
+        },
+        None => (
+            "404 Not Found",
+            CT_JSON,
+            json!({ "error": format!("no lifecycle data on disk for run `{id}`") }).to_string(),
+        ),
+    }
+}
+
+/// `GET /export?id={id}` — the self-contained offline lifecycle HTML for one run.
+fn export_response(trace_dir: &str, query: &str) -> Resp {
+    let Some(id) = query_param(query, "id") else {
+        return bad_request("id is required");
+    };
+    // `id` is not percent-decoded; the `safe_id` gate inside build_from_dir
+    // rejects anything outside `[A-Za-z0-9_.-]` (and `..`), so a `%`-encoded or
+    // traversal id simply 404s rather than escaping the trace dir.
+    match crate::lifecycle_load::build_from_dir(std::path::Path::new(trace_dir), id) {
+        Some(lc) => match render_lifecycle_export(&lc, &lc.run_id) {
+            Some(html) => ("200 OK", CT_HTML, html),
+            None => (
+                "500 Internal Server Error",
+                CT_TEXT,
+                "lifecycle render failed (shared-render markers missing?)".to_string(),
+            ),
+        },
+        None => (
+            "404 Not Found",
+            CT_TEXT,
+            format!("no lifecycle data on disk for run `{id}`"),
+        ),
     }
 }
 
@@ -1042,5 +1142,76 @@ mod tests {
             Some("http://evil.example"),
             &allowed
         ));
+    }
+
+    // ---- lifecycle export drift guards (B7) ----
+
+    /// The export shell must keep all three injection points, or
+    /// `render_lifecycle_export` would silently emit an unrendered placeholder.
+    #[test]
+    fn lifecycle_html_has_all_three_placeholders() {
+        for marker in [
+            "__RUN_ID__",
+            "__LIFECYCLE_JSON__",
+            "// __SHARED_RENDER_BLOCK__",
+        ] {
+            assert!(
+                LIFECYCLE_HTML.contains(marker),
+                "lifecycle.html is missing placeholder `{marker}`"
+            );
+        }
+    }
+
+    /// The dashboard must keep both shared-render markers (the export extracts
+    /// the JS between them — losing one breaks single-sourcing).
+    #[test]
+    fn dashboard_html_has_both_shared_markers() {
+        assert!(
+            INDEX_HTML.contains(SHARED_START),
+            "missing SHARED_RENDER_START"
+        );
+        assert!(INDEX_HTML.contains(SHARED_END), "missing SHARED_RENDER_END");
+    }
+
+    /// The extracted shared block must define the three render functions the
+    /// export/dashboard depend on. If one is renamed without updating the export,
+    /// this fails instead of shipping a blank artifact.
+    #[test]
+    fn extract_shared_js_finds_render_functions() {
+        let js = extract_shared_js(INDEX_HTML).expect("markers present → extractable");
+        for needle in [
+            "swimlane(",
+            "causalDag(",
+            "recoveryChain(",
+            "renderLifecycleInto(",
+        ] {
+            assert!(js.contains(needle), "shared block missing `{needle}`");
+        }
+        // The extracted block must NOT carry the marker comments themselves.
+        assert!(!js.contains(SHARED_START));
+        assert!(!js.contains(SHARED_END));
+    }
+
+    /// `render_lifecycle_export` must substitute EVERY placeholder — none may
+    /// survive into the emitted artifact.
+    #[test]
+    fn render_lifecycle_export_substitutes_every_placeholder() {
+        let lc = lumen_core::lifecycle_builder::build(&[], None, None, None);
+        let html = render_lifecycle_export(&lc, &lc.run_id).expect("render succeeds");
+        for marker in [
+            "__RUN_ID__",
+            "__LIFECYCLE_JSON__",
+            "// __SHARED_RENDER_BLOCK__",
+        ] {
+            assert!(
+                !html.contains(marker),
+                "rendered export still contains placeholder `{marker}`"
+            );
+        }
+        // The injected JS + JSON are present.
+        assert!(html.contains("renderLifecycleInto("));
+        assert!(html.contains("\"run_id\""));
+        // No raw `</script>` from JSON content can break the page.
+        assert!(!html.contains("</script></script>"));
     }
 }

@@ -2,6 +2,7 @@
 
 mod dashboard;
 mod kova;
+mod lifecycle_load;
 mod netdata;
 mod pull;
 
@@ -104,6 +105,40 @@ enum Commands {
         /// Maximum number of traces to fetch (default 200, max 10000).
         #[arg(long, default_value_t = pull::DEFAULT_PULL_LIMIT)]
         limit: usize,
+        /// Also fetch the deep lifecycle sidecars per trace (causal + workflow),
+        /// so `lumen export` renders the full lifecycle offline.
+        #[arg(long)]
+        deep: bool,
+    },
+    /// Export one run as a self-contained, offline lifecycle HTML.
+    ///
+    /// Assembles the run's whole story — swimlane timeline, causal DAG,
+    /// crash→recovery stitching, swarm delegations, provenance badge — into a
+    /// single `.html` that opens with no server and no CDN. Reads local trace
+    /// files (+ `pull --deep` sidecars); with `--kova-url` it first fetches just
+    /// that run (trace + chain + sidecars) from a live Kova.
+    Export {
+        /// Run id to export (a trace id, or a workflow id for a workflow-only run).
+        run_id: String,
+        /// Output file (default `{run_id}-lifecycle.html`).
+        #[arg(short, long)]
+        output: Option<String>,
+        /// Trace directory holding `{id}.json` (+ sidecars).
+        #[arg(long, default_value = "./traces", alias = "wal-dir")]
+        trace_dir: String,
+        /// Live Kova base URL — fetch this run first, then export.
+        /// Falls back to LUMEN_KOVA_URL.
+        #[arg(long)]
+        kova_url: Option<String>,
+        /// API key (`X-API-Key`). Falls back to LUMEN_KOVA_API_KEY then KOVA_API_KEY.
+        #[arg(long)]
+        api_key: Option<String>,
+        /// Optional swarm id to also fetch + merge the swarm graph/trace.
+        #[arg(long)]
+        swarm: Option<String>,
+        /// Don't open the result in a browser.
+        #[arg(long)]
+        no_open: bool,
     },
     /// Run a single Kova control command (headless console).
     ///
@@ -160,7 +195,27 @@ fn main() -> std::process::ExitCode {
             api_key,
             trace_dir,
             limit,
-        } => return cmd_pull(&kova_url, api_key, &trace_dir, limit),
+            deep,
+        } => return cmd_pull(&kova_url, api_key, &trace_dir, limit, deep),
+        Commands::Export {
+            run_id,
+            output,
+            trace_dir,
+            kova_url,
+            api_key,
+            swarm,
+            no_open,
+        } => {
+            return cmd_export(
+                &run_id,
+                output.as_deref(),
+                &trace_dir,
+                resolve_kova_url(kova_url),
+                api_key,
+                swarm.as_deref(),
+                no_open,
+            );
+        }
         Commands::Kova {
             command,
             kova_url,
@@ -234,14 +289,25 @@ fn cmd_pull(
     api_key: Option<String>,
     trace_dir: &str,
     limit: usize,
+    deep: bool,
 ) -> std::process::ExitCode {
     let limit = limit.min(pull::MAX_PULL_LIMIT);
     let key = resolve_api_key(api_key);
     let fetcher = pull::HttpFetcher::new(kova_url, key);
     let dir = std::path::Path::new(trace_dir);
 
-    println!("\x1b[36m⇣ Pulling up to {limit} traces from {kova_url}\x1b[0m");
-    match pull::pull_into(&fetcher, dir, limit) {
+    let mode = if deep {
+        " (deep — with lifecycle sidecars)"
+    } else {
+        ""
+    };
+    println!("\x1b[36m⇣ Pulling up to {limit} traces from {kova_url}{mode}\x1b[0m");
+    let result = if deep {
+        pull::pull_into_deep(&fetcher, dir, limit)
+    } else {
+        pull::pull_into(&fetcher, dir, limit)
+    };
+    match result {
         Ok(summary) => {
             if summary.listed == 0 {
                 println!("  No traces on the server. Nothing to pull.");
@@ -252,11 +318,23 @@ fn cmd_pull(
                     summary.listed,
                     dir.display()
                 );
+                if deep {
+                    println!(
+                        "  sidecars: {} causal, {} workflow",
+                        summary.causal_written, summary.workflow_written
+                    );
+                }
                 if !summary.skipped.is_empty() {
                     println!(
                         "  \x1b[33m⚠ {} skipped: {}\x1b[0m",
                         summary.skipped.len(),
                         summary.skipped.join(", ")
+                    );
+                }
+                if !summary.sidecar_skipped.is_empty() {
+                    println!(
+                        "  \x1b[33m⚠ {} sidecar(s) skipped\x1b[0m",
+                        summary.sidecar_skipped.len()
                     );
                 }
             }
@@ -267,6 +345,82 @@ fn cmd_pull(
             std::process::ExitCode::FAILURE
         }
     }
+}
+
+/// `lumen export <run>` — assemble one run's lifecycle and write a
+/// self-contained `.html`. With `kova_url`, fetch the run live into `trace_dir`
+/// first; otherwise read what's already on disk.
+fn cmd_export(
+    run_id: &str,
+    output: Option<&str>,
+    trace_dir: &str,
+    kova_url: Option<String>,
+    api_key: Option<String>,
+    swarm: Option<&str>,
+    no_open: bool,
+) -> std::process::ExitCode {
+    let dir = std::path::Path::new(trace_dir);
+
+    // Live mode: fetch just this run (trace + chain + sidecars) into trace_dir.
+    if let Some(url) = kova_url {
+        let fetcher = pull::HttpFetcher::new(&url, resolve_api_key(api_key));
+        println!("\x1b[36m⇣ Fetching run {run_id} from {url}\x1b[0m");
+        if let Err(e) = lifecycle_load::fetch_run_into_dir(&fetcher, dir, run_id, swarm) {
+            eprintln!("\x1b[31mError: {e}\x1b[0m");
+            return std::process::ExitCode::FAILURE;
+        }
+    }
+
+    let Some(lc) = lifecycle_load::build_from_dir(dir, run_id) else {
+        eprintln!(
+            "\x1b[31mError: no lifecycle data for run `{run_id}` in {}\x1b[0m",
+            dir.display()
+        );
+        eprintln!(
+            "  (pull it first: `lumen pull --deep --kova-url <url>`, or pass --kova-url here)"
+        );
+        return std::process::ExitCode::FAILURE;
+    };
+
+    let Some(html) = dashboard::render_lifecycle_export(&lc, &lc.run_id) else {
+        eprintln!("\x1b[31mError: lifecycle render failed (shared-render markers missing?)\x1b[0m");
+        return std::process::ExitCode::FAILURE;
+    };
+
+    let out_path = output.map_or_else(|| format!("{run_id}-lifecycle.html"), str::to_string);
+    if let Err(e) = std::fs::write(&out_path, &html) {
+        eprintln!("\x1b[31mError: writing {out_path}: {e}\x1b[0m");
+        return std::process::ExitCode::FAILURE;
+    }
+
+    println!(
+        "  \x1b[32m✓ lifecycle written\x1b[0m → {out_path} ({} steps, {} causal nodes)",
+        lc.timeline.len(),
+        lc.causal.nodes.len()
+    );
+    if !no_open {
+        open_path_in_browser(&out_path);
+    }
+    std::process::ExitCode::SUCCESS
+}
+
+/// Best-effort open a local file path in the system browser (export convenience).
+fn open_path_in_browser(path: &str) {
+    let abs = std::fs::canonicalize(path)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| path.to_string());
+    // Strip the Windows verbatim prefix so `start`/`open` accept the path.
+    let abs = abs.strip_prefix(r"\\?\").unwrap_or(&abs).to_string();
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("cmd")
+        .args(["/c", "start", "", &abs])
+        .spawn();
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(&abs).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let _ = std::process::Command::new("xdg-open").arg(&abs).spawn();
+    #[cfg(not(any(target_os = "windows", target_os = "macos", unix)))]
+    let _ = abs;
 }
 
 /// Points requested per chart for the headless metrics snapshot.
