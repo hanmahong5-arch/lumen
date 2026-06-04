@@ -88,11 +88,44 @@ fn extract_shared_js(html: &str) -> Option<&str> {
 pub fn render_lifecycle_export(lc: &Lifecycle, run_id: &str) -> Option<String> {
     let shared = extract_shared_js(INDEX_HTML)?;
     let json = serde_json::to_string(lc).ok()?.replace("</", "<\\/");
-    let html = LIFECYCLE_HTML
-        .replace("__RUN_ID__", &html_escape_min(run_id))
-        .replace("// __SHARED_RENDER_BLOCK__", shared)
-        .replace("__LIFECYCLE_JSON__", &json);
+    let run = html_escape_min(run_id);
+    // Single left-to-right pass (NOT chained .replace): a value that happens to
+    // contain another placeholder's token — a run_id of "__LIFECYCLE_JSON__", or
+    // a JSON summary containing "__RUN_ID__" — must never be re-substituted.
+    let html = fill_placeholders(
+        LIFECYCLE_HTML,
+        &[
+            ("__RUN_ID__", run.as_str()),
+            ("// __SHARED_RENDER_BLOCK__", shared),
+            ("__LIFECYCLE_JSON__", json.as_str()),
+        ],
+    );
     Some(html)
+}
+
+/// Fill template placeholders in ONE pass: at each step replace the earliest
+/// remaining placeholder with its value and advance past it, so substituted
+/// values are never re-scanned for other placeholders.
+fn fill_placeholders(template: &str, subs: &[(&str, &str)]) -> String {
+    let mut out = String::with_capacity(template.len() + 4096);
+    let mut rest = template;
+    loop {
+        let next = subs
+            .iter()
+            .filter_map(|(marker, value)| rest.find(marker).map(|idx| (idx, *marker, *value)))
+            .min_by_key(|(idx, _, _)| *idx);
+        match next {
+            Some((idx, marker, value)) => {
+                out.push_str(&rest[..idx]);
+                out.push_str(value);
+                rest = &rest[idx + marker.len()..];
+            }
+            None => {
+                out.push_str(rest);
+                return out;
+            }
+        }
+    }
 }
 
 /// Minimal HTML-text escaper for the run id placeholder.
@@ -1213,5 +1246,32 @@ mod tests {
         assert!(html.contains("\"run_id\""));
         // No raw `</script>` from JSON content can break the page.
         assert!(!html.contains("</script></script>"));
+    }
+
+    #[test]
+    fn fill_placeholders_does_not_resubstitute_values() {
+        // A value for __A__ that contains __B__ must NOT be re-substituted by
+        // __B__'s value — guards render_lifecycle_export against a run_id of
+        // "__LIFECYCLE_JSON__" or a JSON summary containing "__RUN_ID__".
+        let out = fill_placeholders(
+            "title=__A__ data=__B__",
+            &[("__A__", "x__B__x"), ("__B__", "DATA")],
+        );
+        assert_eq!(out, "title=x__B__x data=DATA");
+    }
+
+    #[test]
+    fn render_lifecycle_export_run_id_collision_is_safe() {
+        // A run_id equal to the JSON placeholder must not inject the blob into
+        // the title (single-pass fill); the title shows the literal run_id.
+        let mut lc = lumen_core::lifecycle_builder::build(&[], None, None, None);
+        lc.run_id = "__LIFECYCLE_JSON__".to_string();
+        let html = render_lifecycle_export(&lc, &lc.run_id).expect("render");
+        assert!(
+            html.contains("run __LIFECYCLE_JSON__"),
+            "title shows literal id"
+        );
+        // The data block is still the real JSON, exactly once.
+        assert_eq!(html.matches("const LIFECYCLE = {").count(), 1);
     }
 }

@@ -67,18 +67,57 @@ fn chain_from_disk(trace_dir: &Path, target: AgentTrace) -> Vec<AgentTrace> {
         let Some(parent_id) = newest_first
             .last()
             .and_then(|t| t.parent_trace_id.clone())
-            .filter(|p| !p.is_empty() && !seen.contains(p))
+            // `safe_id` gates path traversal: parent_trace_id comes from a trace
+            // FILE on disk, so a crafted `../../secret` must not escape the dir
+            // (the live `fetch_chain` applies the same guard — keep them symmetric).
+            .filter(|p| !p.is_empty() && safe_id(p) && !seen.contains(p))
         else {
             break;
         };
         let Some(parent) = read_trace(trace_dir, &parent_id) else {
             break;
         };
+        // Track BOTH the load key and the loaded trace_id so a file whose
+        // content trace_id differs from its name can't be re-fetched in a cycle.
+        seen.insert(parent_id);
         seen.insert(parent.trace_id.clone());
         newest_first.push(parent);
     }
     newest_first.reverse(); // oldest → newest
     newest_first
+}
+
+/// Small margin (ms) around the run window so boundary events (AgentStart /
+/// AgentComplete written a few ms outside the trace's own start/complete stamps)
+/// aren't dropped. Far smaller than the gap between two of the same agent's runs.
+const CAUSAL_WINDOW_MARGIN_MS: u64 = 2_000;
+
+/// Keep only causal events whose wall-clock falls within the recovery chain's
+/// `[earliest start, latest completion]` window (± a small margin). Empty chain
+/// (workflow-only run) or a still-running newest run ⇒ keep all (no scoping
+/// signal). The DAG's directive→result edges are mid-run, well inside the window.
+fn scope_causal_to_chain(chain: &[AgentTrace], events: Vec<CausalEvent>) -> Vec<CausalEvent> {
+    let Some(start_ms) = chain.iter().map(|t| t.started_at_ms).min() else {
+        return events; // no traces to scope against
+    };
+    // `None` if ANY run in the chain is still running ⇒ open upper bound.
+    let end_ms: Option<u64> = chain
+        .iter()
+        .map(|t| t.completed_at_ms)
+        .try_fold(0u64, |acc, c| c.map(|v| acc.max(v)));
+
+    let lo_ns = start_ms
+        .saturating_sub(CAUSAL_WINDOW_MARGIN_MS)
+        .saturating_mul(1_000_000);
+    let hi_ns = end_ms.map(|ms| {
+        ms.saturating_add(CAUSAL_WINDOW_MARGIN_MS)
+            .saturating_mul(1_000_000)
+    });
+
+    events
+        .into_iter()
+        .filter(|e| e.timestamp_ns >= lo_ns && hi_ns.is_none_or(|hi| e.timestamp_ns <= hi))
+        .collect()
 }
 
 /// Build a [`Lifecycle`] for `run_id` from `trace_dir`, reading the trace +
@@ -95,7 +134,10 @@ pub fn build_from_dir(trace_dir: &Path, run_id: &str) -> Option<Lifecycle> {
         .map(|t| chain_from_disk(trace_dir, t))
         .unwrap_or_default();
 
-    let causal = read_causal(trace_dir, run_id);
+    // `GET /agents/{id}/history?format=causal` is per-AGENT (every run that
+    // agent ever did), so scope it to THIS run's wall-clock window — otherwise a
+    // reused agent's lifecycle DAG would show every past run's events.
+    let causal = read_causal(trace_dir, run_id).map(|evs| scope_causal_to_chain(&chain, evs));
     let workflow = read_workflow(trace_dir, run_id);
     let swarm = read_swarm(trace_dir, run_id);
 
@@ -368,6 +410,49 @@ mod tests {
         assert_eq!(lc.workflow_steps.len(), 1);
         assert!(lc.timeline.len() == 1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scope_causal_drops_out_of_window_events() {
+        use lumen_core::causal_types::CausalEvent;
+        use lumen_core::trace_types::{TokenUsage, TraceStatus};
+        let t = AgentTrace {
+            trace_id: "t".into(),
+            agent_id: "a".into(),
+            task_id: 0,
+            steps: vec![],
+            status: TraceStatus::Completed,
+            total_tokens: TokenUsage::default(),
+            total_cost_usd: 0.0,
+            started_at_ms: 10_000,
+            completed_at_ms: Some(20_000),
+            parent_trace_id: None,
+            schema_version: 1,
+        };
+        let ev = |id: u64, ms: u64| CausalEvent {
+            event_id: id,
+            record_type: "AgentDirective".into(),
+            timestamp_ns: ms * 1_000_000,
+            caused_by: None,
+            correlation_key: None,
+            summary: String::new(),
+        };
+        let evs = vec![
+            ev(0, 5_000),  // a PRIOR run (before the window) → dropped
+            ev(1, 15_000), // in-window → kept
+            ev(2, 19_500), // in-window → kept
+            ev(3, 90_000), // a LATER run (after the window) → dropped
+        ];
+        let scoped = scope_causal_to_chain(std::slice::from_ref(&t), evs);
+        let ids: Vec<u64> = scoped.iter().map(|e| e.event_id).collect();
+        assert_eq!(ids, vec![1, 2], "only in-window events survive");
+
+        // A still-running run (no completion) ⇒ open upper bound, keeps later events.
+        let mut running = t;
+        running.completed_at_ms = None;
+        let evs2 = vec![ev(1, 15_000), ev(3, 90_000)];
+        let scoped2 = scope_causal_to_chain(std::slice::from_ref(&running), evs2);
+        assert_eq!(scoped2.len(), 2, "open upper bound keeps later events");
     }
 
     #[test]

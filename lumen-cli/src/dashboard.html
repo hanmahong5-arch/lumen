@@ -403,11 +403,11 @@ function lcProvenance(lc){
 // Compose the full lifecycle view into `el` from a Lifecycle JSON object.
 function renderLifecycleInto(el, lc){
   if(!lc){ el.innerHTML='<div class="empty">No lifecycle data.</div>'; return; }
-  const dur = lc.completed_ms ? (lc.completed_ms-lc.started_ms) : 0;
+  const dur = (lc.completed_ms!=null) ? (lc.completed_ms-lc.started_ms) : null;
   const sc = /complete/i.test(lc.status)?LCP.ok:/fail|error/i.test(lc.status)?LCP.err:LCP.llm;
   const cards = `<div class="cards">`+
     `<div class="card"><div class="k">status</div><div class="v" style="color:${sc}">${lcEsc(lc.status)}</div></div>`+
-    `<div class="card"><div class="k">duration</div><div class="v">${dur?lcDur(dur):"—"}</div></div>`+
+    `<div class="card"><div class="k">duration</div><div class="v">${dur!=null?lcDur(dur):"—"}</div></div>`+
     `<div class="card"><div class="k">tokens</div><div class="v">${lcTok(lc.total_tokens)}</div></div>`+
     `<div class="card"><div class="k">cost</div><div class="v">${lcUsd(lc.total_cost_usd)}</div></div>`+
     `<div class="card"><div class="k">steps</div><div class="v">${(lc.timeline||[]).length}</div></div></div>`;
