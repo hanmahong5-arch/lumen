@@ -74,6 +74,8 @@ for step in trace.steps:
 ## CLI
 
 ```bash
+lumen demo                           # One command → real run → opens its lifecycle .html
+lumen demo --kova-url http://localhost:3010   # …against a Kova you already run
 lumen replay <trace-id>              # Replay an agent run (zero cost)
 lumen replay <id> --from-step 7      # Replay from a specific step
 lumen cost --last 24h                # Cost report (flags per-run cost outliers)
@@ -91,6 +93,11 @@ lumen pull --deep --kova-url http://localhost:3010   # …+ causal/workflow life
 lumen export <run> --trace-dir ./traces              # One run → self-contained offline lifecycle .html
 lumen export <run> --kova-url http://localhost:3010  # …fetch that run live first, then export
 ```
+
+**First look?** Just `lumen demo`. It spins up an ephemeral Kova, runs one real agent, and opens the
+lifecycle `.html` — no setup, no pipeline to learn. (Needs `KOVA_LLM_API_KEY`; the ephemeral path also
+needs a `kova-rest` binary on `PATH`/`KOVA_REST_BIN`, or point `--kova-url` at a Kova you already run.)
+The `pull`/`traces`/`cost`/`replay`/`export` verbs below are the power-user pipeline for after that.
 
 ## Lifecycle view & export
 

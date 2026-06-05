@@ -1,6 +1,7 @@
 //! Lumen CLI — illuminate your AI agents.
 
 mod dashboard;
+mod demo;
 mod kova;
 mod lifecycle_load;
 mod netdata;
@@ -159,6 +160,35 @@ enum Commands {
         #[arg(long)]
         yes: bool,
     },
+    /// One command, one picture — run a canned scenario and open its lifecycle.
+    ///
+    /// The zero-to-visual path for evaluating Kova: spins up an ephemeral
+    /// `kova-rest` (or uses `--kova-url`), runs one real `reconcile` agent, and
+    /// opens the self-contained lifecycle `.html`. The power-user pipeline
+    /// (`pull` / `traces` / `cost` / `replay` / `export`) stays available, but a
+    /// first look needs none of it. Requires `KOVA_LLM_API_KEY` (the agent loop
+    /// is LLM-driven); for the ephemeral path it also locates a `kova-rest`
+    /// binary via `--kova-bin`, `KOVA_REST_BIN`, `PATH`, or the dev tree.
+    Demo {
+        /// Output HTML file (default `kova-demo-lifecycle.html`).
+        #[arg(short, long)]
+        output: Option<String>,
+        /// Use an already-running Kova instead of spawning one.
+        /// Falls back to `LUMEN_KOVA_URL`.
+        #[arg(long)]
+        kova_url: Option<String>,
+        /// API key for `--kova-url` (`X-API-Key`). Falls back to
+        /// `LUMEN_KOVA_API_KEY` then `KOVA_API_KEY`.
+        #[arg(long)]
+        api_key: Option<String>,
+        /// Path to the `kova-rest` binary for the ephemeral path (overrides the
+        /// `KOVA_REST_BIN` / `PATH` / dev-tree search).
+        #[arg(long)]
+        kova_bin: Option<String>,
+        /// Don't open the result in a browser.
+        #[arg(long)]
+        no_open: bool,
+    },
 }
 
 fn main() -> std::process::ExitCode {
@@ -222,6 +252,21 @@ fn main() -> std::process::ExitCode {
             api_key,
             yes,
         } => return cmd_kova(kova_url, api_key, &command, yes),
+        Commands::Demo {
+            output,
+            kova_url,
+            api_key,
+            kova_bin,
+            no_open,
+        } => {
+            return cmd_demo(
+                output.as_deref(),
+                resolve_kova_url(kova_url),
+                api_key,
+                kova_bin.as_deref(),
+                no_open,
+            );
+        }
     }
     std::process::ExitCode::SUCCESS
 }
@@ -371,6 +416,25 @@ fn cmd_export(
         }
     }
 
+    finish_export(
+        dir,
+        run_id,
+        &format!("{run_id}-lifecycle.html"),
+        output,
+        no_open,
+    )
+}
+
+/// Build a run's lifecycle from `dir`, render the self-contained HTML, write it
+/// to `output` (or `default_out`), and open it unless `no_open`. Shared by
+/// `lumen export` and `lumen demo`.
+fn finish_export(
+    dir: &std::path::Path,
+    run_id: &str,
+    default_out: &str,
+    output: Option<&str>,
+    no_open: bool,
+) -> std::process::ExitCode {
     let Some(lc) = lifecycle_load::build_from_dir(dir, run_id) else {
         eprintln!(
             "\x1b[31mError: no lifecycle data for run `{run_id}` in {}\x1b[0m",
@@ -387,7 +451,7 @@ fn cmd_export(
         return std::process::ExitCode::FAILURE;
     };
 
-    let out_path = output.map_or_else(|| format!("{run_id}-lifecycle.html"), str::to_string);
+    let out_path = output.map_or_else(|| default_out.to_string(), str::to_string);
     if let Err(e) = std::fs::write(&out_path, &html) {
         eprintln!("\x1b[31mError: writing {out_path}: {e}\x1b[0m");
         return std::process::ExitCode::FAILURE;
@@ -402,6 +466,96 @@ fn cmd_export(
         open_path_in_browser(&out_path);
     }
     std::process::ExitCode::SUCCESS
+}
+
+/// `lumen demo` — collapse the whole pipeline into one command. Gets a Kova
+/// (ephemeral spawn, or `--kova-url`), runs one canned `reconcile` agent, then
+/// fetches + renders its lifecycle into a self-contained `.html`.
+fn cmd_demo(
+    output: Option<&str>,
+    kova_url: Option<String>,
+    api_key: Option<String>,
+    kova_bin: Option<&str>,
+    no_open: bool,
+) -> std::process::ExitCode {
+    // A throwaway trace dir for the fetched run + sidecars (cleaned at the end).
+    let trace_dir = std::env::temp_dir().join(format!("lumen-demo-traces-{}", std::process::id()));
+    let dir = trace_dir.as_path();
+
+    // Resolve the target Kova: an explicit URL wins; otherwise spawn one. The
+    // `_spawned` guard, if present, tears the ephemeral instance down on return.
+    let (url, key, _spawned) = match kova_url {
+        Some(url) => {
+            println!("\x1b[36m▶ demo — using running Kova at {url}\x1b[0m");
+            (url, resolve_api_key(api_key), None)
+        }
+        None => {
+            let Some(bin) = demo::locate_kova_rest(kova_bin) else {
+                eprintln!("\x1b[31mError: could not find a `kova-rest` binary to spawn.\x1b[0m");
+                eprintln!(
+                    "  set --kova-bin <path> or KOVA_REST_BIN, put `kova-rest` on PATH,\n  \
+                     or pass --kova-url to use a Kova you already have running."
+                );
+                return std::process::ExitCode::FAILURE;
+            };
+            let Some(llm) = demo::LlmEnv::from_env() else {
+                eprintln!(
+                    "\x1b[31mError: KOVA_LLM_API_KEY is not set.\x1b[0m the demo runs a real \
+                     agent, which needs an LLM."
+                );
+                eprintln!(
+                    "  export KOVA_LLM_API_KEY=sk-...  (optionally KOVA_LLM_BASE_URL / \
+                     KOVA_LLM_MODEL), then re-run."
+                );
+                return std::process::ExitCode::FAILURE;
+            };
+            println!(
+                "\x1b[36m▶ demo — spawning ephemeral kova-rest ({})\x1b[0m",
+                bin.display()
+            );
+            match demo::spawn_ephemeral(&bin, &llm) {
+                Ok(s) => {
+                    println!(
+                        "  \x1b[32m✓ kova ready\x1b[0m at {} (worker running)",
+                        s.url
+                    );
+                    let (url, key) = (s.url.clone(), s.api_key.clone());
+                    (url, Some(key), Some(s))
+                }
+                Err(e) => {
+                    eprintln!("\x1b[31mError: {e}\x1b[0m");
+                    return std::process::ExitCode::FAILURE;
+                }
+            }
+        }
+    };
+
+    // Run the canned scenario.
+    println!("  running canned `reconcile` agent (real LLM)…");
+    let client = kova::HttpKovaClient::new(&url, key.clone());
+    let run_id = match demo::run_canned_scenario(&client) {
+        Ok(id) => {
+            println!("  \x1b[32m✓ run complete\x1b[0m → {id}");
+            id
+        }
+        Err(e) => {
+            eprintln!("\x1b[31mError: {e}\x1b[0m");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+
+    // Fetch the run (trace + lifecycle sidecars) and render the HTML.
+    let fetcher = pull::HttpFetcher::new(&url, key);
+    if let Err(e) = lifecycle_load::fetch_run_into_dir(&fetcher, dir, &run_id, None) {
+        eprintln!("\x1b[31mError: fetching run {run_id}: {e}\x1b[0m");
+        return std::process::ExitCode::FAILURE;
+    }
+    let code = finish_export(dir, &run_id, "kova-demo-lifecycle.html", output, no_open);
+
+    // Best-effort cleanup of the throwaway trace dir (the ephemeral kova, if any,
+    // is torn down when `_spawned` drops at the end of this scope).
+    let _ = std::fs::remove_dir_all(dir);
+    code
 }
 
 /// Best-effort open a local file path in the system browser (export convenience).
