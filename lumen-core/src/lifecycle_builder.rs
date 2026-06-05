@@ -202,7 +202,15 @@ fn build_from_workflow(
     let timeline: Vec<TimelineNode> = steps
         .iter()
         .map(|s| TimelineNode {
-            phase: format!("step {} · {}", s.index, s.kind),
+            // Prefer the step's output preview (label) so a declarative run
+            // reads as its real story (e.g. "category=billing_dispute") rather
+            // than a generic "step". Fall back to the derived kind when the step
+            // produced no preview; `status` already carries await/sleep/error.
+            phase: if s.label.is_empty() {
+                format!("step {} · {}", s.index, s.kind)
+            } else {
+                format!("step {} · {}", s.index, s.label)
+            },
             lane: lane::WORKFLOW.to_string(),
             t_start: s.t_start,
             dur_ms: s.dur_ms,
