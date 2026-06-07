@@ -113,6 +113,14 @@ pub struct WorkflowRunDetail {
     /// Attempt number the next retry will use (only when `awaiting_retry`).
     #[serde(default)]
     pub retry_attempt: Option<u32>,
+    /// Name of the signal this run is parked on (only when
+    /// `status == awaiting_signal`). Surfaced so the visualizer can show *which*
+    /// signal a run waits for, not just that it waits.
+    #[serde(default)]
+    pub awaiting_signal_name: Option<String>,
+    /// Step index parked awaiting a signal (only when `status == awaiting_signal`).
+    #[serde(default)]
+    pub awaiting_signal_step: Option<u32>,
 }
 
 /// A node in the swarm delegation graph (`GET /swarm/{id}/graph`).
@@ -217,6 +225,24 @@ mod tests {
         assert_eq!(detail.steps.len(), 1);
         assert_eq!(detail.terminal_at_ms, None);
         assert!(detail.compensated_steps.is_empty());
+    }
+
+    #[test]
+    fn workflow_detail_parses_awaiting_signal() {
+        let json = r#"{"workflow_id":5,"status":"awaiting_signal","total_steps":2,
+            "steps":[{"step_index":1,"started_at_ms":10,"duration_ms":0}],
+            "awaiting_signal_step":1,"awaiting_signal_name":"approve_payment"}"#;
+        let detail: WorkflowRunDetail = serde_json::from_str(json).unwrap();
+        assert_eq!(detail.awaiting_signal_step, Some(1));
+        assert_eq!(
+            detail.awaiting_signal_name.as_deref(),
+            Some("approve_payment")
+        );
+        // Absent in an older producer → None via serde(default).
+        let older = r#"{"workflow_id":5,"status":"completed","total_steps":1,"steps":[]}"#;
+        let d2: WorkflowRunDetail = serde_json::from_str(older).unwrap();
+        assert_eq!(d2.awaiting_signal_step, None);
+        assert_eq!(d2.awaiting_signal_name, None);
     }
 
     #[test]

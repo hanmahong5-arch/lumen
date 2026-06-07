@@ -263,6 +263,8 @@ fn build_workflow_steps(wf: &WorkflowRunDetail) -> Vec<WfStep> {
         .map(|s| {
             let (kind, status) = if wf.awaiting_step == Some(s.step_index) {
                 ("await", "await")
+            } else if wf.awaiting_signal_step == Some(s.step_index) {
+                ("await_signal", "await_signal")
             } else if wf.sleeping_step == Some(s.step_index) {
                 ("sleep", "sleep")
             } else if wf.failed_step == Some(s.step_index) {
@@ -272,10 +274,20 @@ fn build_workflow_steps(wf: &WorkflowRunDetail) -> Vec<WfStep> {
             } else {
                 ("step", "ok")
             };
+            // A parked-on-signal step has no output yet; surface *which* signal it
+            // waits for instead of an empty preview.
+            let label = if kind == "await_signal" {
+                match wf.awaiting_signal_name.as_deref() {
+                    Some(n) if !n.is_empty() => truncate(&format!("await signal: {n}"), LABEL_CAP),
+                    _ => "awaiting signal".to_string(),
+                }
+            } else {
+                truncate(&s.output_preview, LABEL_CAP)
+            };
             WfStep {
                 index: s.step_index,
                 kind: kind.to_string(),
-                label: truncate(&s.output_preview, LABEL_CAP),
+                label,
                 t_start: s.started_at_ms,
                 dur_ms: s.duration_ms,
                 status: status.to_string(),
@@ -577,6 +589,53 @@ mod tests {
         assert_eq!(lc.workflow_steps[1].kind, "compensation");
         assert_eq!(lc.workflow_steps[2].kind, "failed");
         assert_eq!(lc.workflow_steps[2].status, "error");
+    }
+
+    #[test]
+    fn awaiting_signal_step_is_kind_await_signal_with_name() {
+        let wf = WorkflowRunDetail {
+            workflow_id: 5,
+            status: "awaiting_signal".into(),
+            total_steps: 2,
+            steps: vec![
+                WorkflowStep {
+                    step_index: 0,
+                    output_preview: "started".into(),
+                    ..Default::default()
+                },
+                WorkflowStep {
+                    step_index: 1,
+                    ..Default::default()
+                },
+            ],
+            awaiting_signal_step: Some(1),
+            awaiting_signal_name: Some("approve_payment".into()),
+            ..Default::default()
+        };
+        let lc = build(&[], None, Some(&wf), None);
+        assert_eq!(lc.workflow_steps[1].kind, "await_signal");
+        assert_eq!(lc.workflow_steps[1].status, "await_signal");
+        // The signal name is surfaced in the label (which signal, not just that
+        // it waits).
+        assert!(
+            lc.workflow_steps[1].label.contains("approve_payment"),
+            "label surfaces the signal name: {}",
+            lc.workflow_steps[1].label
+        );
+        // A missing name degrades to a plain marker, never an empty label.
+        let wf2 = WorkflowRunDetail {
+            workflow_id: 6,
+            status: "awaiting_signal".into(),
+            total_steps: 1,
+            steps: vec![WorkflowStep {
+                step_index: 0,
+                ..Default::default()
+            }],
+            awaiting_signal_step: Some(0),
+            ..Default::default()
+        };
+        let lc2 = build(&[], None, Some(&wf2), None);
+        assert_eq!(lc2.workflow_steps[0].label, "awaiting signal");
     }
 
     #[test]

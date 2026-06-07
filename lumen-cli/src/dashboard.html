@@ -302,6 +302,12 @@ const lcShort = s => lcClip(s,16);
 const lcUsd = n => { const v=Number(n)||0; return "$"+v.toFixed(v<0.01?5:4); };
 const lcDur = ms => { ms=Number(ms)||0; return ms<1000?Math.round(ms)+"ms":ms<60000?(ms/1000).toFixed(ms<10000?2:1)+"s":(ms/60000).toFixed(1)+"m"; };
 const lcTok = n => { n=Number(n)||0; return n>=1000?(n/1000).toFixed(1)+"k":String(n); };
+// Declarative-step kind → accent color (await_signal violet, await cyan, sleep
+// slate, failed red, compensation amber; plain step muted).
+const wfKindColor = k => ({await_signal:"#a855f7", await:"#22d3ee", sleep:"#64748b", failed:"#ef4444", compensation:"#f59e0b"}[k] || "#8b93a7");
+// A step whose status means "parked, not done" (so the swimlane shows it as a
+// wait, not a completed bar).
+const lcWaiting = st => /await|sleep|signal/i.test(String(st||""));
 
 // Time-accurate swimlane (Gantt) over the whole recovery chain, lane-grouped.
 function swimlane(lc){
@@ -315,7 +321,7 @@ function swimlane(lc){
     const bars = nodes.filter(n=>n.lane===l.id).map(n=>{
       const left=(n.t_start-t0)/span, width=Math.max((n.dur_ms||0)/span,0.006);
       const isPoint=(n.dur_ms||0)===0, st=n.status||"ok";
-      const bg = st==="error" ? LCP.err : l.color;
+      const bg = st==="error" ? LCP.err : lcWaiting(st) ? "#64748b" : l.color;
       const tip = `${lcEsc(n.phase)} · +${lcDur(n.t_start-t0)} · ${lcDur(n.dur_ms)}`+
         `${n.tokens?` · ${lcTok(n.tokens)} tok`:""}${n.cost_usd!=null?` · ${lcUsd(n.cost_usd)}`:""} · ${lcEsc(st)}`;
       const posLeft = `calc(${LBL}px + (100% - ${LBL}px) * ${left})`;
@@ -461,7 +467,7 @@ function renderLifecycleInto(el, lc){
   if((lc.workflow_steps||[]).length){
     const rows=lc.workflow_steps.map(s=>`<div style="display:flex;gap:10px;padding:6px 0;border-bottom:1px solid ${LCP.border}">`+
       `<span style="color:${LCP.workflow};font-family:monospace;width:42px">#${s.index}</span>`+
-      `<span style="width:120px;color:${LCP.muted}">${lcEsc(s.kind)}</span>`+
+      `<span style="width:120px;color:${wfKindColor(s.kind)};font-weight:${s.kind==="step"?400:700}">${lcEsc(s.kind)}</span>`+
       `<span style="flex:1">${lcEsc(lcClip(s.label,80))}</span>`+
       `<span style="color:${LCP.muted}">${lcDur(s.dur_ms)}</span></div>`).join("");
     wf=`<div class="section-title">Workflow steps</div><div class="panel">${rows}</div>`;
