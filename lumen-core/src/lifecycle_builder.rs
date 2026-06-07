@@ -147,11 +147,26 @@ fn timeline_node_from_step(step: &crate::trace_types::TraceStep, trace_id: &str)
         .metadata
         .iter()
         .any(|(k, v)| k == "recovery" && v == "true");
+    // A tool-policy deny is recorded as a failed ToolCall PLUS metadata; render
+    // it distinctly from a real tool failure — status "denied" (own swimlane
+    // color) with the reason folded into the visible label, the same "carry the
+    // detail in the label" pattern as the signal-name work.
+    let policy_denied = step
+        .metadata
+        .iter()
+        .any(|(k, v)| k == "policy_denied" && v == "true");
     let (lane_id, status) = match &step.step_type {
         TraceStepType::LlmCall { .. } => (lane::LLM, "ok".to_string()),
         TraceStepType::ToolCall { success, .. } => (
             lane::TOOL,
-            if *success { "ok" } else { "error" }.to_string(),
+            if policy_denied {
+                "denied"
+            } else if *success {
+                "ok"
+            } else {
+                "error"
+            }
+            .to_string(),
         ),
         TraceStepType::Checkpoint { .. } => (
             lane::WAIT,
@@ -159,8 +174,25 @@ fn timeline_node_from_step(step: &crate::trace_types::TraceStep, trace_id: &str)
         ),
         TraceStepType::Error { .. } => (lane::TOOL, "error".to_string()),
     };
+    // Denied tool: label as `⊘ <tool> — <reason>`. A missing reason degrades to
+    // a plain "⊘ <tool> — denied", never an empty/ambiguous label.
+    let phase = match &step.step_type {
+        TraceStepType::ToolCall { tool_name, .. } if policy_denied => {
+            let reason = step
+                .metadata
+                .iter()
+                .find(|(k, _)| k == "deny_reason")
+                .map_or("", |(_, v)| v.as_str());
+            if reason.is_empty() {
+                format!("⊘ {tool_name} — denied")
+            } else {
+                format!("⊘ {tool_name} — {reason}")
+            }
+        }
+        _ => step.step_type.to_string(),
+    };
     TimelineNode {
-        phase: step.step_type.to_string(),
+        phase,
         lane: lane_id.to_string(),
         t_start: step.started_at_ms,
         dur_ms: step.duration_ms,
@@ -466,6 +498,47 @@ mod tests {
         assert!(lc.causal.nodes.is_empty());
         assert_eq!(lc.recovery_chain, vec!["t-1".to_string()]);
         assert_eq!(lc.provenance.sources, vec!["trace".to_string()]);
+    }
+
+    #[test]
+    fn policy_denied_tool_renders_as_denied_with_reason() {
+        // A tool-policy deny is a failed ToolCall + metadata. It must render as
+        // status "denied" (own swimlane color) with the reason in the label,
+        // while a plain failed tool (no metadata) stays "error".
+        let denied = TraceStep {
+            step_num: 0,
+            step_type: TraceStepType::ToolCall {
+                tool_name: "shell".into(),
+                success: false,
+            },
+            started_at_ms: 1000,
+            duration_ms: 0,
+            tokens: None,
+            cost_usd: None,
+            metadata: vec![
+                ("policy_denied".into(), "true".into()),
+                ("deny_reason".into(), "not in allowlist".into()),
+            ],
+        };
+        let t = trace(
+            "t-d",
+            None,
+            1000,
+            vec![denied, tool_step(1, 1100, "search", false)],
+        );
+        let lc = build(&[&t], None, None, None);
+        assert_eq!(lc.timeline.len(), 2);
+        // Denied tool: distinct status + tool + reason folded into the label.
+        assert_eq!(lc.timeline[0].status, "denied");
+        assert!(lc.timeline[0].phase.contains('⊘'));
+        assert!(lc.timeline[0].phase.contains("shell"));
+        assert!(
+            lc.timeline[0].phase.contains("not in allowlist"),
+            "reason in label: {}",
+            lc.timeline[0].phase
+        );
+        // A plain failed tool (no policy metadata) stays "error", not "denied".
+        assert_eq!(lc.timeline[1].status, "error");
     }
 
     #[test]

@@ -344,7 +344,9 @@ function swimlane(lc){
     const bars = nodes.filter(n=>n.lane===l.id).map(n=>{
       const left=(n.t_start-t0)/span, width=Math.max((n.dur_ms||0)/span,0.006);
       const isPoint=(n.dur_ms||0)===0, st=n.status||"ok";
-      const bg = st==="error" ? LCP.err : lcWaiting(st) ? "#64748b" : l.color;
+      // "denied" = a tool-policy rejection (orange), distinct from a real tool
+      // error (red) and from swarm-amber; the ⊘ prefix already rides in n.phase.
+      const bg = st==="error" ? LCP.err : st==="denied" ? "#f97316" : lcWaiting(st) ? "#64748b" : l.color;
       const tip = `${lcEsc(n.phase)} · +${lcDur(n.t_start-t0)} · ${lcDur(n.dur_ms)}`+
         `${n.tokens?` · ${lcTok(n.tokens)} tok`:""}${n.cost_usd!=null?` · ${lcUsd(n.cost_usd)}`:""} · ${lcEsc(st)}`;
       const posLeft = `calc(${LBL}px + (100% - ${LBL}px) * ${left})`;
