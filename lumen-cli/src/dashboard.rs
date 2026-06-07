@@ -1254,6 +1254,24 @@ mod tests {
     }
 
     #[test]
+    fn render_lifecycle_export_embeds_continue_as_new_flag() {
+        // A Continue-As-New lifecycle must carry the flag into the offline
+        // artifact so the embedded shared render block can draw the cyan pill.
+        let mut lc = lumen_core::lifecycle_builder::build(&[], None, None, None);
+        lc.continued_as_new = true;
+        let html = render_lifecycle_export(&lc, &lc.run_id).expect("render succeeds");
+        assert!(
+            html.contains("\"continued_as_new\":true"),
+            "export JSON must embed the CAN flag"
+        );
+        // The shared render block carries the pill label + the branch drawing it.
+        assert!(
+            html.contains("Continue-As-New"),
+            "pill label present in shared JS"
+        );
+    }
+
+    #[test]
     fn fill_placeholders_does_not_resubstitute_values() {
         // A value for __A__ that contains __B__ must NOT be re-substituted by
         // __B__'s value — guards render_lifecycle_export against a run_id of

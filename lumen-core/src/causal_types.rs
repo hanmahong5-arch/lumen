@@ -121,6 +121,12 @@ pub struct WorkflowRunDetail {
     /// Step index parked awaiting a signal (only when `status == awaiting_signal`).
     #[serde(default)]
     pub awaiting_signal_step: Option<u32>,
+    /// `true` when this run was terminated by Continue-As-New (it handed off to a
+    /// successor) rather than a plain completion. Both render as `status ==
+    /// completed`, so this flag is the only signal distinguishing a continuation
+    /// from a finish. Defaults to `false` for older producers that don't emit it.
+    #[serde(default)]
+    pub continued_as_new: bool,
 }
 
 /// A node in the swarm delegation graph (`GET /swarm/{id}/graph`).
@@ -243,6 +249,20 @@ mod tests {
         let d2: WorkflowRunDetail = serde_json::from_str(older).unwrap();
         assert_eq!(d2.awaiting_signal_step, None);
         assert_eq!(d2.awaiting_signal_name, None);
+    }
+
+    #[test]
+    fn workflow_detail_parses_continued_as_new() {
+        // A Continue-As-New run reports status "completed" PLUS the flag.
+        let json = r#"{"workflow_id":7,"status":"completed","total_steps":2,"steps":[],
+            "continued_as_new":true}"#;
+        let detail: WorkflowRunDetail = serde_json::from_str(json).unwrap();
+        assert_eq!(detail.status, "completed");
+        assert!(detail.continued_as_new);
+        // Absent in an older producer → false via serde(default).
+        let older = r#"{"workflow_id":7,"status":"completed","total_steps":2,"steps":[]}"#;
+        let d2: WorkflowRunDetail = serde_json::from_str(older).unwrap();
+        assert!(!d2.continued_as_new);
     }
 
     #[test]

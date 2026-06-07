@@ -176,6 +176,13 @@ pub struct Lifecycle {
     pub swarm: Option<SwarmView>,
     /// Recovery chain of trace ids, oldest→newest (len 1 = no crash).
     pub recovery_chain: Vec<String>,
+    /// `true` when the run handed off via Continue-As-New (workflow flag,
+    /// derived from [`WorkflowRunDetail::continued_as_new`]). Rendered as a
+    /// distinct continuation pill — NOT a recovery-chain hop (that chain is
+    /// agent-trace-derived; a workflow-only CAN never enters it). Defaults to
+    /// `false`, so older exports keep loading.
+    #[serde(default)]
+    pub continued_as_new: bool,
     /// Provenance + tamper-evidence note.
     pub provenance: Provenance,
 }

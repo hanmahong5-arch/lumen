@@ -499,8 +499,14 @@ function renderLifecycleInto(el, lc){
   if(lc.swarm && (lc.swarm.nodes||[]).length){
     sw=`<div class="section-title">Swarm delegations</div>`+swarmGraph(lc);
   }
+  // Continue-As-New is a workflow handoff, NOT a crash recovery — render it as a
+  // distinct cyan pill so it never reads as a plain completion (both are
+  // status="completed") nor as a magenta recovery-chain hop.
+  const canPill = lc.continued_as_new
+    ? `<span title="this run handed off to a successor via Continue-As-New — not a crash recovery" style="background:rgba(34,211,238,.14);color:${LCP.workflow};border:1px solid ${LCP.workflow};border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700;margin-left:8px">↻ Continue-As-New</span>`
+    : "";
   el.innerHTML = `<h2 style="margin:4px 0 2px">${lcEsc(lc.run_id)}</h2>`+
-    `<div style="color:${LCP.muted};margin-bottom:8px">${lc.agent_id?`agent <b style="color:${LCP.fg}">${lcEsc(lc.agent_id)}</b> · `:""}lifecycle</div>`+
+    `<div style="color:${LCP.muted};margin-bottom:8px">${lc.agent_id?`agent <b style="color:${LCP.fg}">${lcEsc(lc.agent_id)}</b> · `:""}lifecycle${canPill}</div>`+
     cards + recoveryChain(lc)+
     `<div class="section-title">Timeline (swimlane)</div>`+swimlane(lc)+
     `<div class="section-title">Causal graph</div>`+causalDag(lc)+

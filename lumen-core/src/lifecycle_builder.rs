@@ -73,6 +73,9 @@ pub fn build(
         workflow_steps,
         swarm: swarm_view,
         recovery_chain,
+        // T2: a workflow flag — true only when the run handed off via
+        // Continue-As-New. Rendered as a continuation pill, not a recovery hop.
+        continued_as_new: workflow.is_some_and(|w| w.continued_as_new),
         provenance,
     }
 }
@@ -559,6 +562,35 @@ mod tests {
         assert_eq!(lc.started_ms, 10);
         assert_eq!(lc.completed_ms, Some(23));
         assert!(lc.provenance.sources.contains(&"workflow".to_string()));
+        // A plain completion does NOT set the continuation flag.
+        assert!(!lc.continued_as_new);
+    }
+
+    #[test]
+    fn continue_as_new_sets_lifecycle_flag_not_recovery_chain() {
+        // A Continue-As-New run reports status "completed" PLUS the flag; it is a
+        // workflow flag, NOT a recovery-chain hop (that chain is trace-derived).
+        let wf = WorkflowRunDetail {
+            workflow_id: 88,
+            workflow_type: "billing-cycle".into(),
+            status: "completed".into(),
+            total_steps: 1,
+            completed_step_count: 1,
+            steps: vec![WorkflowStep {
+                step_index: 0,
+                output_preview: "handed off".into(),
+                started_at_ms: 10,
+                duration_ms: 3,
+            }],
+            started_at_ms: 10,
+            terminal_at_ms: Some(13),
+            continued_as_new: true,
+            ..Default::default()
+        };
+        let lc = build(&[], None, Some(&wf), None);
+        assert!(lc.continued_as_new, "the CAN flag flows from the detail");
+        // CAN is a workflow flag, not a crash → the recovery chain stays trivial.
+        assert_eq!(lc.recovery_chain, vec!["88".to_string()]);
     }
 
     #[test]
