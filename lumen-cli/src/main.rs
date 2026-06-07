@@ -6,6 +6,7 @@ mod kova;
 mod lifecycle_load;
 mod netdata;
 mod pull;
+mod tour;
 
 use clap::{Parser, Subcommand};
 
@@ -189,6 +190,22 @@ enum Commands {
         #[arg(long)]
         no_open: bool,
     },
+    /// Assemble a narrated index over per-capability lifecycle exports.
+    ///
+    /// Given one `--entry run_id:label:blurb` per capability, writes a single
+    /// self-contained `index.html` — a card grid (reusing the export theme) where
+    /// each card narrates a capability and links to its `<label>.html` lifecycle
+    /// file in the same directory. Driven by `capability-tour.sh` after it exports
+    /// each run, but usable by hand too.
+    Tour {
+        /// One capability card, `run_id:label:blurb` (repeatable). The blurb may
+        /// contain colons; the label is also the linked `<label>.html` filename.
+        #[arg(long = "entry")]
+        entry: Vec<String>,
+        /// Output file (default `tour-index.html`).
+        #[arg(short, long)]
+        output: Option<String>,
+    },
 }
 
 fn main() -> std::process::ExitCode {
@@ -267,7 +284,45 @@ fn main() -> std::process::ExitCode {
                 no_open,
             );
         }
+        Commands::Tour { entry, output } => return cmd_tour(&entry, output.as_deref()),
     }
+    std::process::ExitCode::SUCCESS
+}
+
+/// `lumen tour --entry run_id:label:blurb …` — write a narrated index over the
+/// per-capability lifecycle exports. Malformed entries are warned-and-skipped;
+/// the index is written as long as at least one entry parses.
+fn cmd_tour(entries: &[String], output: Option<&str>) -> std::process::ExitCode {
+    let parsed: Vec<tour::TourEntry> = entries
+        .iter()
+        .filter_map(|raw| match tour::parse_entry(raw) {
+            Some(e) => Some(e),
+            None => {
+                eprintln!(
+                    "\x1b[33m⚠ skipping malformed --entry `{raw}` (want run_id:label:blurb)\x1b[0m"
+                );
+                None
+            }
+        })
+        .collect();
+    if parsed.is_empty() {
+        eprintln!(
+            "\x1b[31mError: no valid --entry given.\x1b[0m each is `run_id:label:blurb` \
+             (blurb optional)"
+        );
+        return std::process::ExitCode::FAILURE;
+    }
+
+    let html = tour::render_tour(&parsed);
+    let out_path = output.unwrap_or("tour-index.html");
+    if let Err(e) = std::fs::write(out_path, &html) {
+        eprintln!("\x1b[31mError: writing {out_path}: {e}\x1b[0m");
+        return std::process::ExitCode::FAILURE;
+    }
+    println!(
+        "  \x1b[32m✓ tour index written\x1b[0m → {out_path} ({} capabilities)",
+        parsed.len()
+    );
     std::process::ExitCode::SUCCESS
 }
 
