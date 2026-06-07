@@ -1218,6 +1218,10 @@ mod tests {
             "recoveryChain(",
             "swarmGraph(",
             "renderLifecycleInto(",
+            // zoom is wired via inline onclick in the offline export, so the
+            // function must survive into the extracted block.
+            "function lcZoom(",
+            "zoomControls(",
         ] {
             assert!(js.contains(needle), "shared block missing `{needle}`");
         }

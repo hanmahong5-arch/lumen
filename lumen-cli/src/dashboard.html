@@ -309,6 +309,29 @@ const wfKindColor = k => ({await_signal:"#a855f7", await:"#22d3ee", sleep:"#6474
 // wait, not a completed bar).
 const lcWaiting = st => /await|sleep|signal/i.test(String(st||""));
 
+// Zoom controls for an SVG graph (DAG / swarm). The SVG carries a viewBox, so
+// zoom is just rescaling its width/height attributes — no transform math, and it
+// works in the offline export via inline onclick (no event wiring). Scroll the
+// panel to pan. Self-contained: lives inside the shared block.
+function zoomControls(){
+  const b = `background:${LCP.panel2};border:1px solid ${LCP.border2};color:${LCP.fg};border-radius:6px;cursor:pointer;font-size:12px;padding:2px 9px`;
+  return `<div style="display:flex;gap:6px;margin-bottom:8px;align-items:center">`+
+    `<button type="button" style="${b}" onclick="lcZoom(this,1.25)">+</button>`+
+    `<button type="button" style="${b}" onclick="lcZoom(this,0.8)">&minus;</button>`+
+    `<button type="button" style="${b}" onclick="lcZoom(this,0)">reset</button>`+
+    `<span style="color:${LCP.muted};font-size:10px">zoom · scroll to pan</span></div>`;
+}
+function lcZoom(btn,f){
+  const p=btn.closest(".panel"); if(!p) return;
+  const svg=p.querySelector("svg"); if(!svg) return;
+  const vb=(svg.getAttribute("viewBox")||"0 0 100 100").split(/\s+/).map(Number);
+  let s=parseFloat(svg.getAttribute("data-s")||"1");
+  s = f===0 ? 1 : Math.min(4, Math.max(0.3, s*f));
+  svg.setAttribute("data-s", String(s));
+  svg.setAttribute("width", (vb[2]*s).toFixed(0));
+  svg.setAttribute("height", (vb[3]*s).toFixed(0));
+}
+
 // Time-accurate swimlane (Gantt) over the whole recovery chain, lane-grouped.
 function swimlane(lc){
   const nodes = (lc&&lc.timeline)||[];
@@ -378,7 +401,7 @@ function causalDag(lc){
       `<title>#${n.id} ${lcEsc(n.record_type)} · ${lcEsc(n.summary)}</title></g>`;
   }).join("");
   const note = edges.length ? "" : `<div class="empty" style="margin-top:8px">Events present, but no causal edges — a pure-text / single-step run.</div>`;
-  return `<div class="panel" style="overflow-x:auto"><svg width="${W}" height="${Hh}" style="min-width:100%">`+
+  return `<div class="panel" style="overflow:auto;max-height:78vh">${zoomControls()}<svg width="${W}" height="${Hh}" viewBox="0 0 ${W} ${Hh}" data-s="1">`+
     `<defs><marker id="lcArrow" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L8,3 L0,6 Z" fill="${LCP.llm}"/></marker></defs>`+
     `${epaths}${rects}</svg>${note}</div>`;
 }
@@ -446,7 +469,7 @@ function swarmGraph(lc){
   const legend = `<div style="display:flex;gap:16px;margin-top:8px;font-size:11px;color:${LCP.muted};flex-wrap:wrap">`+
     `<span><b style="color:#a855f7">■</b> supervisor</span><span><b style="color:${LCP.swarm}">■</b> worker</span>`+
     `<span><b style="color:${LCP.swarm}">→</b> delegation</span><span><b style="color:${LCP.workflow}">→</b> handoff</span></div>`;
-  return `<div class="panel" style="overflow-x:auto"><svg width="${W}" height="${Hh}" style="min-width:100%">`+
+  return `<div class="panel" style="overflow:auto;max-height:78vh">${zoomControls()}<svg width="${W}" height="${Hh}" viewBox="0 0 ${W} ${Hh}" data-s="1">`+
     `<defs><marker id="swArrow" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L8,3 L0,6 Z" fill="${LCP.swarm}"/></marker>`+
     `<marker id="swArrowH" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L8,3 L0,6 Z" fill="${LCP.workflow}"/></marker></defs>`+
     `${epaths}${rects}</svg>${legend}</div>`;
