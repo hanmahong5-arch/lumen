@@ -1216,6 +1216,7 @@ mod tests {
             "swimlane(",
             "causalDag(",
             "recoveryChain(",
+            "continuationChain(",
             "swarmGraph(",
             "renderLifecycleInto(",
             // zoom is wired via inline onclick in the offline export, so the
@@ -1268,6 +1269,28 @@ mod tests {
         assert!(
             html.contains("Continue-As-New"),
             "pill label present in shared JS"
+        );
+    }
+
+    #[test]
+    fn render_lifecycle_export_embeds_continuation_chain() {
+        // A multi-run CAN chain must reach the offline artifact so the embedded
+        // continuationChain() can draw the cyan run-id pills.
+        let mut lc = lumen_core::lifecycle_builder::build(&[], None, None, None);
+        lc.continuation_chain = vec!["1".into(), "2".into(), "3".into()];
+        let html = render_lifecycle_export(&lc, &lc.run_id).expect("render succeeds");
+        assert!(
+            html.contains("\"continuation_chain\":[\"1\",\"2\",\"3\"]"),
+            "export JSON must embed the continuation chain"
+        );
+        // The shared render block carries the chain renderer + its label.
+        assert!(
+            html.contains("continuationChain("),
+            "chain renderer in shared JS"
+        );
+        assert!(
+            html.contains("continuation chain:"),
+            "chain label present in shared JS"
         );
     }
 

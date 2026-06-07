@@ -127,6 +127,14 @@ pub struct WorkflowRunDetail {
     /// from a finish. Defaults to `false` for older producers that don't emit it.
     #[serde(default)]
     pub continued_as_new: bool,
+    /// **CAN chain** — the ordered run-id continuation chain `[head, …, tail]`
+    /// (e.g. `[1,2,3]`) this run belongs to, computed server-side by kova-rest.
+    /// **Empty** for a non-CAN run; a single-element `[id]` when sibling runs
+    /// were compacted away. Rendered as a chain (like the recovery chain) when
+    /// `len > 1`, NOT stitched from `parent_trace_id`. Defaults to empty for
+    /// older producers that don't emit it.
+    #[serde(default)]
+    pub continuation_chain: Vec<u64>,
 }
 
 /// A node in the swarm delegation graph (`GET /swarm/{id}/graph`).
@@ -253,16 +261,19 @@ mod tests {
 
     #[test]
     fn workflow_detail_parses_continued_as_new() {
-        // A Continue-As-New run reports status "completed" PLUS the flag.
+        // A Continue-As-New run reports status "completed" PLUS the flag and the
+        // server-computed continuation chain.
         let json = r#"{"workflow_id":7,"status":"completed","total_steps":2,"steps":[],
-            "continued_as_new":true}"#;
+            "continued_as_new":true,"continuation_chain":[7,8,9]}"#;
         let detail: WorkflowRunDetail = serde_json::from_str(json).unwrap();
         assert_eq!(detail.status, "completed");
         assert!(detail.continued_as_new);
-        // Absent in an older producer → false via serde(default).
+        assert_eq!(detail.continuation_chain, vec![7, 8, 9]);
+        // Absent in an older producer → false / empty via serde(default).
         let older = r#"{"workflow_id":7,"status":"completed","total_steps":2,"steps":[]}"#;
         let d2: WorkflowRunDetail = serde_json::from_str(older).unwrap();
         assert!(!d2.continued_as_new);
+        assert!(d2.continuation_chain.is_empty());
     }
 
     #[test]

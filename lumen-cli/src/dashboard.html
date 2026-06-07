@@ -420,6 +420,20 @@ function recoveryChain(lc){
     `<span style="color:${LCP.muted};margin-right:8px">crash-recovery chain:</span>${pills}</div>`;
 }
 
+// Continue-As-New run pills (only when the chain has more than one run). Cyan
+// ↻ — a workflow continuation hand-off, distinct from the magenta crash-recovery
+// chain above. Mirrors recoveryChain(); fed by lc.continuation_chain.
+function continuationChain(lc){
+  const chain=(lc&&lc.continuation_chain)||[];
+  if(chain.length<=1) return "";
+  const pills = chain.map((id,i)=>{
+    const arrow = i>0 ? `<span title="continue-as-new → fresh successor run" style="color:${LCP.workflow};margin:0 8px;font-weight:700">↻</span>` : "";
+    return `${arrow}<span style="background:rgba(34,211,238,.14);border:1px solid ${LCP.workflow};border-radius:20px;padding:5px 12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px">${lcEsc(lcShort(id))}</span>`;
+  }).join("");
+  return `<div class="panel" style="display:flex;align-items:center;flex-wrap:wrap;gap:4px">`+
+    `<span style="color:${LCP.muted};margin-right:8px">continuation chain:</span>${pills}</div>`;
+}
+
 // Provenance + tamper-evidence badge.
 function lcProvenance(lc){
   const p=(lc&&lc.provenance)||{sources:[],wal_hmac_note:""};
@@ -509,7 +523,7 @@ function renderLifecycleInto(el, lc){
     : "";
   el.innerHTML = `<h2 style="margin:4px 0 2px">${lcEsc(lc.run_id)}</h2>`+
     `<div style="color:${LCP.muted};margin-bottom:8px">${lc.agent_id?`agent <b style="color:${LCP.fg}">${lcEsc(lc.agent_id)}</b> · `:""}lifecycle${canPill}</div>`+
-    cards + recoveryChain(lc)+
+    cards + recoveryChain(lc)+ continuationChain(lc)+
     `<div class="section-title">Timeline (swimlane)</div>`+swimlane(lc)+
     `<div class="section-title">Causal graph</div>`+causalDag(lc)+
     wf + sw +

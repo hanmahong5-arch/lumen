@@ -1,7 +1,8 @@
 //! Vendored Agent execution trace types.
 //!
 //! vendored from 2b-svc-kova/kova-types/src/trace.rs (v0.2.0), keep in sync
-//! (last synced 2026-06-04: added `TraceStep::cost_usd`; 2026-06-01: added
+//! (last synced 2026-06-07: mirrored `TraceStep::policy_deny_reason`;
+//! 2026-06-04: added `TraceStep::cost_usd`; 2026-06-01: added
 //! `AgentTrace::schema_version`)
 //!
 //! Lumen consumes Kova's `AgentTrace`/`TraceStep`/`TraceStepType`/`TraceStatus`
@@ -118,6 +119,39 @@ pub struct TraceStep {
     pub cost_usd: Option<f64>,
     /// Arbitrary key-value metadata.
     pub metadata: Vec<(String, String)>,
+}
+
+impl TraceStep {
+    /// The tool-policy denial reason iff this step is a *policy denial* — a tool
+    /// call rejected by a policy gate — `None` otherwise.
+    ///
+    /// Mirror of `kova_types::TraceStep::policy_deny_reason` (keep in sync,
+    /// added 2026-06-07). A policy denial is a failed `ToolCall` carrying both
+    /// `("policy_denied", "true")` and `("deny_reason", <text>)` in metadata.
+    /// This typed reader is the single place that convention is decoded, so the
+    /// lifecycle builder no longer matches the magic strings inline. Returns
+    /// `None` for a runtime tool *failure* (no marker), a successful tool call,
+    /// a non-`ToolCall` step, or partial metadata (marker but no reason).
+    #[must_use]
+    pub fn policy_deny_reason(&self) -> Option<&str> {
+        if !matches!(
+            self.step_type,
+            TraceStepType::ToolCall { success: false, .. }
+        ) {
+            return None;
+        }
+        let denied = self
+            .metadata
+            .iter()
+            .any(|(k, v)| k == "policy_denied" && v == "true");
+        if !denied {
+            return None;
+        }
+        self.metadata
+            .iter()
+            .find(|(k, _)| k == "deny_reason")
+            .map(|(_, v)| v.as_str())
+    }
 }
 
 /// Classification of a trace step.
@@ -292,6 +326,39 @@ mod tests {
         assert_eq!(trace.completed_at_ms, Some(1250));
         // Legacy step JSON (no cost_usd) → serde default None.
         assert_eq!(trace.steps[0].cost_usd, None);
+    }
+
+    #[test]
+    fn policy_deny_reason_typed_reader() {
+        let denied = TraceStep {
+            step_num: 0,
+            step_type: TraceStepType::ToolCall {
+                tool_name: "shell".into(),
+                success: false,
+            },
+            started_at_ms: 0,
+            duration_ms: 0,
+            tokens: None,
+            cost_usd: None,
+            metadata: vec![
+                ("policy_denied".into(), "true".into()),
+                ("deny_reason".into(), "not in allowlist".into()),
+            ],
+        };
+        assert_eq!(denied.policy_deny_reason(), Some("not in allowlist"));
+
+        // A genuine runtime failure (no marker) is NOT a denial.
+        let mut runtime_fail = denied.clone();
+        runtime_fail.metadata = vec![("error".into(), "boom".into())];
+        assert_eq!(runtime_fail.policy_deny_reason(), None);
+
+        // A successful tool call is never a denial, markers notwithstanding.
+        let mut ok = denied.clone();
+        ok.step_type = TraceStepType::ToolCall {
+            tool_name: "shell".into(),
+            success: true,
+        };
+        assert_eq!(ok.policy_deny_reason(), None);
     }
 
     #[test]

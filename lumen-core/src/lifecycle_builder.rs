@@ -76,6 +76,11 @@ pub fn build(
         // T2: a workflow flag — true only when the run handed off via
         // Continue-As-New. Rendered as a continuation pill, not a recovery hop.
         continued_as_new: workflow.is_some_and(|w| w.continued_as_new),
+        // CAN chain: the server-computed run-id chain (as strings, mirroring
+        // recovery_chain). Empty for non-CAN / non-workflow runs.
+        continuation_chain: workflow
+            .map(|w| w.continuation_chain.iter().map(u64::to_string).collect())
+            .unwrap_or_default(),
         provenance,
     }
 }
@@ -150,16 +155,15 @@ fn timeline_node_from_step(step: &crate::trace_types::TraceStep, trace_id: &str)
     // A tool-policy deny is recorded as a failed ToolCall PLUS metadata; render
     // it distinctly from a real tool failure — status "denied" (own swimlane
     // color) with the reason folded into the visible label, the same "carry the
-    // detail in the label" pattern as the signal-name work.
-    let policy_denied = step
-        .metadata
-        .iter()
-        .any(|(k, v)| k == "policy_denied" && v == "true");
+    // detail in the label" pattern as the signal-name work. The typed reader
+    // (mirror of kova's `policy_deny_reason`) decodes the convention in one
+    // place: `Some` only for a failed ToolCall carrying both deny markers.
+    let deny_reason = step.policy_deny_reason();
     let (lane_id, status) = match &step.step_type {
         TraceStepType::LlmCall { .. } => (lane::LLM, "ok".to_string()),
         TraceStepType::ToolCall { success, .. } => (
             lane::TOOL,
-            if policy_denied {
+            if deny_reason.is_some() {
                 "denied"
             } else if *success {
                 "ok"
@@ -174,20 +178,14 @@ fn timeline_node_from_step(step: &crate::trace_types::TraceStep, trace_id: &str)
         ),
         TraceStepType::Error { .. } => (lane::TOOL, "error".to_string()),
     };
-    // Denied tool: label as `⊘ <tool> — <reason>`. A missing reason degrades to
-    // a plain "⊘ <tool> — denied", never an empty/ambiguous label.
-    let phase = match &step.step_type {
-        TraceStepType::ToolCall { tool_name, .. } if policy_denied => {
-            let reason = step
-                .metadata
-                .iter()
-                .find(|(k, _)| k == "deny_reason")
-                .map_or("", |(_, v)| v.as_str());
-            if reason.is_empty() {
-                format!("⊘ {tool_name} — denied")
-            } else {
-                format!("⊘ {tool_name} — {reason}")
-            }
+    // Denied tool: label as `⊘ <tool> — <reason>`. A defensively-empty reason
+    // degrades to a plain "⊘ <tool> — denied", never an empty/ambiguous label.
+    let phase = match (&step.step_type, deny_reason) {
+        (TraceStepType::ToolCall { tool_name, .. }, Some(reason)) if !reason.is_empty() => {
+            format!("⊘ {tool_name} — {reason}")
+        }
+        (TraceStepType::ToolCall { tool_name, .. }, Some(_)) => {
+            format!("⊘ {tool_name} — denied")
         }
         _ => step.step_type.to_string(),
     };
@@ -658,12 +656,19 @@ mod tests {
             started_at_ms: 10,
             terminal_at_ms: Some(13),
             continued_as_new: true,
+            continuation_chain: vec![86, 87, 88],
             ..Default::default()
         };
         let lc = build(&[], None, Some(&wf), None);
         assert!(lc.continued_as_new, "the CAN flag flows from the detail");
         // CAN is a workflow flag, not a crash → the recovery chain stays trivial.
         assert_eq!(lc.recovery_chain, vec!["88".to_string()]);
+        // The continuation chain is the server-computed run-id chain, as strings.
+        assert_eq!(
+            lc.continuation_chain,
+            vec!["86".to_string(), "87".to_string(), "88".to_string()],
+            "the continuation chain flows from the detail (u64 -> string)"
+        );
     }
 
     #[test]

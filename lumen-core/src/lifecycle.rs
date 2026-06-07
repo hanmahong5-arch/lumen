@@ -183,6 +183,14 @@ pub struct Lifecycle {
     /// `false`, so older exports keep loading.
     #[serde(default)]
     pub continued_as_new: bool,
+    /// **CAN chain** — the ordered run-id continuation chain (as strings,
+    /// mirroring [`Self::recovery_chain`]) this run belongs to, from
+    /// [`WorkflowRunDetail::continuation_chain`]. Empty for a non-CAN run;
+    /// rendered as a continuation chain (cyan `↻`) when it has more than one
+    /// member, distinct from the magenta crash-recovery chain. Defaults to
+    /// empty, so older exports keep loading.
+    #[serde(default)]
+    pub continuation_chain: Vec<String>,
     /// Provenance + tamper-evidence note.
     pub provenance: Provenance,
 }
