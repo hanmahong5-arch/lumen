@@ -400,6 +400,52 @@ function lcProvenance(lc){
     `<div style="color:${LCP.muted};font-size:11.5px;max-width:760px">${lcEsc(p.wal_hmac_note)}</div></div></div>`;
 }
 
+// Swarm delegation graph: layered SVG (supervisors→workers), modeled on
+// causalDag. Rank = delegation depth (BFS fixpoint, capped at node count so a
+// stray cycle never spins); supervisors render violet, workers amber, errored
+// agents red; delegation edges amber, handoff edges cyan.
+function swarmGraph(lc){
+  const g=(lc&&lc.swarm)||{nodes:[],edges:[]}, nodes=g.nodes||[], edges=g.edges||[];
+  if(!nodes.length) return '<div class="empty">No swarm delegations recorded for this run.</div>';
+  const idx=new Map(nodes.map(n=>[n.id,n]));
+  const rank=new Map(nodes.map(n=>[n.id,0]));
+  for(let pass=0; pass<nodes.length; pass++){ let changed=false;
+    for(const e of edges){ if(!idx.has(e.from)||!idx.has(e.to)) continue;
+      const nr=rank.get(e.from)+1; if(nr>rank.get(e.to)){ rank.set(e.to,nr); changed=true; } }
+    if(!changed) break; }
+  const ranks=new Map();
+  for(const n of [...nodes].sort((a,b)=>String(a.id).localeCompare(String(b.id)))){
+    const r=rank.get(n.id)||0; if(!ranks.has(r)) ranks.set(r,[]); ranks.get(r).push(n); }
+  const maxRank=Math.max(0,...ranks.keys()); let maxCol=1; for(const a of ranks.values()) maxCol=Math.max(maxCol,a.length);
+  const COLW=210, ROWH=72, NW=182, NH=50, PADX=16, PADY=16;
+  const pos=new Map();
+  for(const [r,arr] of ranks) arr.forEach((n,i)=> pos.set(n.id,{x:PADX+r*COLW, y:PADY+i*ROWH}));
+  const W=PADX*2+(maxRank+1)*COLW, Hh=PADY*2+maxCol*ROWH;
+  const isSup = n => /supervis|lead|coordinat/i.test(n.agent_type||"");
+  const nodeColor = n => /fail|error/i.test(n.status||"") ? LCP.err : (isSup(n)?"#a855f7":LCP.swarm);
+  const isHandoff = t => /handoff/i.test(t||"");
+  const epaths = edges.map(e=>{ const a=pos.get(e.from), b=pos.get(e.to); if(!a||!b) return "";
+    const x1=a.x+NW, y1=a.y+NH/2, x2=b.x, y2=b.y+NH/2, mx=(x1+x2)/2;
+    const col=isHandoff(e.edge_type)?LCP.workflow:LCP.swarm, mk=isHandoff(e.edge_type)?"swArrowH":"swArrow";
+    return `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="${col}" stroke-width="1.5" marker-end="url(#${mk})" opacity="0.85"><title>${lcEsc(e.from)} ${lcEsc(e.edge_type)}→ ${lcEsc(e.to)}</title></path>`;
+  }).join("");
+  const rects = nodes.map(n=>{ const p=pos.get(n.id); if(!p) return "";
+    const col=nodeColor(n), tok=(n.prompt_tokens||0)+(n.completion_tokens||0);
+    return `<g><rect x="${p.x}" y="${p.y}" width="${NW}" height="${NH}" rx="8" fill="${LCP.panel2}" stroke="${col}" stroke-width="1.5"/>`+
+      `<text x="${p.x+10}" y="${p.y+18}" fill="${col}" font-size="11" font-weight="700">${lcEsc(lcClip(n.id,22))}</text>`+
+      `<text x="${p.x+10}" y="${p.y+33}" fill="${LCP.muted}" font-size="10">${lcEsc(n.agent_type)}${tok?` · ${lcTok(tok)} tok`:""}</text>`+
+      `<text x="${p.x+10}" y="${p.y+45}" fill="${/fail|error/i.test(n.status||"")?LCP.err:LCP.muted}" font-size="9">${lcEsc(lcClip(n.status,26))}</text>`+
+      `<title>${lcEsc(n.id)} · ${lcEsc(n.agent_type)} · ${lcEsc(n.status)} · ${tok} tok</title></g>`;
+  }).join("");
+  const legend = `<div style="display:flex;gap:16px;margin-top:8px;font-size:11px;color:${LCP.muted};flex-wrap:wrap">`+
+    `<span><b style="color:#a855f7">■</b> supervisor</span><span><b style="color:${LCP.swarm}">■</b> worker</span>`+
+    `<span><b style="color:${LCP.swarm}">→</b> delegation</span><span><b style="color:${LCP.workflow}">→</b> handoff</span></div>`;
+  return `<div class="panel" style="overflow-x:auto"><svg width="${W}" height="${Hh}" style="min-width:100%">`+
+    `<defs><marker id="swArrow" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L8,3 L0,6 Z" fill="${LCP.swarm}"/></marker>`+
+    `<marker id="swArrowH" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L8,3 L0,6 Z" fill="${LCP.workflow}"/></marker></defs>`+
+    `${epaths}${rects}</svg>${legend}</div>`;
+}
+
 // Compose the full lifecycle view into `el` from a Lifecycle JSON object.
 function renderLifecycleInto(el, lc){
   if(!lc){ el.innerHTML='<div class="empty">No lifecycle data.</div>'; return; }
@@ -422,11 +468,7 @@ function renderLifecycleInto(el, lc){
   }
   let sw="";
   if(lc.swarm && (lc.swarm.nodes||[]).length){
-    const nodes=lc.swarm.nodes.map(n=>`<span style="background:${LCP.panel2};border:1px solid ${LCP.border2};border-radius:8px;padding:5px 10px;margin:3px;display:inline-block">`+
-      `<b>${lcEsc(n.id)}</b> <span style="color:${LCP.muted}">${lcEsc(n.agent_type)}</span> `+
-      `${(n.prompt_tokens||n.completion_tokens)?`<span style="color:${LCP.swarm}">${lcTok((n.prompt_tokens||0)+(n.completion_tokens||0))} tok</span>`:""}</span>`).join("");
-    const edges=(lc.swarm.edges||[]).map(e=>`<div style="color:${LCP.muted};font-size:12px">${lcEsc(e.from)} <span style="color:${LCP.swarm}">${lcEsc(e.edge_type)}→</span> ${lcEsc(e.to)}</div>`).join("");
-    sw=`<div class="section-title">Swarm delegations</div><div class="panel">${nodes}<div style="margin-top:10px">${edges}</div></div>`;
+    sw=`<div class="section-title">Swarm delegations</div>`+swarmGraph(lc);
   }
   el.innerHTML = `<h2 style="margin:4px 0 2px">${lcEsc(lc.run_id)}</h2>`+
     `<div style="color:${LCP.muted};margin-bottom:8px">${lc.agent_id?`agent <b style="color:${LCP.fg}">${lcEsc(lc.agent_id)}</b> · `:""}lifecycle</div>`+

@@ -1216,6 +1216,7 @@ mod tests {
             "swimlane(",
             "causalDag(",
             "recoveryChain(",
+            "swarmGraph(",
             "renderLifecycleInto(",
         ] {
             assert!(js.contains(needle), "shared block missing `{needle}`");
@@ -1258,6 +1259,58 @@ mod tests {
             &[("__A__", "x__B__x"), ("__B__", "DATA")],
         );
         assert_eq!(out, "title=x__B__x data=DATA");
+    }
+
+    /// A run that delegated to a swarm must carry its nodes/edges all the way
+    /// into the offline export JSON, and the export must include the swarm-graph
+    /// render path. The SVG is drawn client-side; this asserts the data reaches
+    /// the artifact and the render function is single-sourced into it.
+    #[test]
+    fn swarm_lifecycle_export_embeds_graph_data() {
+        use lumen_core::causal_types::{SwarmEdge, SwarmGraph, SwarmNode};
+        let g = SwarmGraph {
+            nodes: vec![
+                SwarmNode {
+                    id: "lead".into(),
+                    agent_type: "supervisor".into(),
+                    status: "completed".into(),
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                },
+                SwarmNode {
+                    id: "researcher".into(),
+                    agent_type: "worker".into(),
+                    status: "completed".into(),
+                    prompt_tokens: 120,
+                    completion_tokens: 40,
+                },
+            ],
+            edges: vec![SwarmEdge {
+                from: "lead".into(),
+                to: "researcher".into(),
+                edge_type: "delegation".into(),
+            }],
+        };
+        let lc = lumen_core::lifecycle_builder::build(&[], None, None, Some(&g));
+        let html = render_lifecycle_export(&lc, &lc.run_id).expect("render");
+        // Swarm data embedded verbatim in the lifecycle JSON.
+        assert!(
+            html.contains("\"researcher\""),
+            "swarm node id in export JSON"
+        );
+        assert!(
+            html.contains("\"delegation\""),
+            "swarm edge type in export JSON"
+        );
+        // The graph render path is present (single-sourced shared block).
+        assert!(
+            html.contains("swarmGraph("),
+            "swarm-graph render fn extracted into export"
+        );
+        assert!(
+            html.contains("Swarm delegations"),
+            "swarm section title present"
+        );
     }
 
     #[test]
