@@ -115,6 +115,28 @@ pub trait TraceFetcher {
     fn fetch_swarm_trace(&self, _swarm_id: &str) -> Result<Option<Vec<u8>>, String> {
         Ok(None)
     }
+
+    /// Fetch the workflow-type **flow** projection (Markov transitions + Bayesian
+    /// priors) — `GET /api/v1/workflows/types/{type}/flow`. `Ok(None)` for a
+    /// `404` (no run of that type) / `501` (no WAL configured).
+    ///
+    /// Default is `Ok(None)` so existing test stubs keep compiling without
+    /// opting into the aggregate view. The raw bytes deserialize into
+    /// [`lumen_core::flow_types::FlowGraph`].
+    ///
+    /// Forward-compat HTTP seam: the **live dashboard** Flow tab fetches flow via
+    /// the server-side `KovaControlClient` console seam (key never reaches the
+    /// browser), so this trait method has no production caller yet — it is the
+    /// capture path for the deferred offline consumer (`lumen pull --deep` →
+    /// `lumen export` rendering flow from a `.flow.json` sidecar). Kept + tested
+    /// now so that follow-up is a pure additive wiring, not a contract change.
+    ///
+    /// # Errors
+    /// Returns a message on a transport/HTTP error other than 404/501.
+    #[allow(dead_code)]
+    fn fetch_flow(&self, _workflow_type: &str) -> Result<Option<Vec<u8>>, String> {
+        Ok(None)
+    }
 }
 
 /// Parse the `GET /api/v1/traces` response body into a list of trace ids.
@@ -434,6 +456,14 @@ impl TraceFetcher for HttpFetcher {
         let url = format!("{}/api/v1/swarm/{safe}/trace", self.base_url);
         self.get_opt(&url)
     }
+
+    fn fetch_flow(&self, workflow_type: &str) -> Result<Option<Vec<u8>>, String> {
+        // Same `'/'→%2F` guard as the other id-bearing fetchers so a malformed
+        // type can't escape the `/workflows/types/` path.
+        let safe = workflow_type.replace('/', "%2F");
+        let url = format!("{}/api/v1/workflows/types/{safe}/flow", self.base_url);
+        self.get_opt(&url)
+    }
 }
 
 use std::io::Read;
@@ -526,6 +556,21 @@ mod tests {
                 .cloned()
                 .unwrap_or(Ok(None))
         }
+    }
+
+    #[test]
+    fn fetch_flow_default_opts_out_with_none() {
+        // The `TraceFetcher::fetch_flow` default returns `Ok(None)` so every
+        // existing stub keeps compiling without the aggregate-flow seam (only the
+        // `HttpFetcher` override hits the wire). Exercising it here documents +
+        // locks that default contract.
+        let f = StubFetcher::new(&[]);
+        assert!(matches!(f.fetch_flow("any_type"), Ok(None)));
+        // And a flow body off that seam deserializes into the shared contract type.
+        let body = br#"{"workflow_type":"t","total_runs":0,"insufficient":true}"#;
+        let fg: lumen_core::flow_types::FlowGraph = serde_json::from_slice(body).unwrap();
+        assert_eq!(fg.workflow_type, "t");
+        assert!(fg.insufficient);
     }
 
     fn trace_json(id: &str) -> String {

@@ -188,6 +188,7 @@
     <button id="tab-overview" class="on" onclick="setView('overview')">Overview</button>
     <button id="tab-traces" onclick="setView('traces')">Traces</button>
     <button id="tab-lifecycle" onclick="setView('lifecycle')">Lifecycle</button>
+    <button id="tab-flow" onclick="setView('flow')">Flow</button>
     <button id="tab-metrics" onclick="setView('metrics')">Metrics</button>
     <button id="tab-terminal" onclick="setView('terminal')">Terminal</button>
   </nav>
@@ -216,6 +217,10 @@ let NETDATA = {configured:false, reachable:false}, ALARMS = [], METRIC_WINDOW = 
 // a destructive command line awaiting an explicit confirm.
 let KOVA = {configured:false, reachable:false, loaded:false};
 let TERM_HIST = [], TERM_HISTI = 0, TERM_PENDING = null;
+// Flow tab state (Markov + Bayesian). FLOW_TYPE: the workflow type loaded;
+// FLOW_RUN: an optional run id (fills the exact cancel/resume command in the
+// risk affordance); FLOW_DATA: the kova FlowGraph; FLOW_ERR: an inline error.
+let FLOW_TYPE = "", FLOW_RUN = "", FLOW_DATA = null, FLOW_ERR = "";
 // Top-level verbs for tab-completion (mirror of kova.rs KOVA_VERBS; a Rust test
 // asserts this list and KOVA_VERBS stay in sync).
 const KOVA_VERBS = ["status","config","agents","agent","workflows","workflow","awaiting","approvals","schedules","schedule","tools","queues","traces","trace","llm","help","clear"];
@@ -529,6 +534,114 @@ function renderLifecycleInto(el, lc){
     wf + sw +
     `<div class="section-title">Provenance</div>`+lcProvenance(lc);
 }
+
+// ── Markov / Bayesian (workflow-type flow) ─────────────────────────────────
+// Self-contained (same rule as the rest of this block): renders a kova
+// `FlowGraph` object `fg` (GET /api/v1/workflows/types/{type}/flow). Lumen NEVER
+// re-aggregates — `fg` is the server's numbers; these functions only draw them.
+
+// Node accent: step=blue, completed=green, failed=red, cancelled=orange,
+// holding (await_*/paused)=cyan. Mirrors the swimlane/causal palette.
+function flowNodeColor(n){
+  if(n.kind==="terminal") return n.state==="completed"?LCP.ok : n.state==="failed"?LCP.err : "#f97316";
+  if(n.kind==="holding") return LCP.workflow;
+  return LCP.llm;
+}
+
+// Markov state-transition graph: left→right ranks (step:i at rank i; terminal +
+// holding sinks forced to the rightmost rank), edge width ∝ p, label `p% · n`.
+// Modeled on causalDag's layered SVG. `currentState` (optional) glows the node a
+// live run is currently sitting on (cyan ring).
+function markovFlow(fg, currentState){
+  const nodes=(fg&&fg.nodes)||[], edges=(fg&&fg.edges)||[];
+  if(!nodes.length) return '<div class="empty">No runs of this workflow type recorded yet.</div>';
+  const stepIdx = s => { const m=/^step:(\d+)$/.exec(String(s)); return m?parseInt(m[1],10):null; };
+  let maxStep=0; for(const n of nodes){ const i=stepIdx(n.state); if(i!=null) maxStep=Math.max(maxStep,i); }
+  const sinkRank = maxStep+1;                      // terminals/holdings rightmost
+  const rankOf = n => { const i=stepIdx(n.state); return i!=null?i:sinkRank; };
+  const sinkOrder = {completed:0, failed:1, cancelled:2};
+  const ordered=[...nodes].sort((a,b)=>{ const ra=rankOf(a),rb=rankOf(b); if(ra!==rb) return ra-rb;
+    const sa=sinkOrder[a.state]!=null?sinkOrder[a.state]:9, sb=sinkOrder[b.state]!=null?sinkOrder[b.state]:9;
+    return sa!==sb ? sa-sb : String(a.state).localeCompare(String(b.state)); });
+  const ranks=new Map();
+  for(const n of ordered){ const r=rankOf(n); if(!ranks.has(r)) ranks.set(r,[]); ranks.get(r).push(n); }
+  const maxRank=Math.max(0,...ranks.keys()); let maxCol=1; for(const a of ranks.values()) maxCol=Math.max(maxCol,a.length);
+  const COLW=158, ROWH=62, NW=120, NH=40, PADX=16, PADY=16;
+  const pos=new Map();
+  for(const [r,arr] of ranks) arr.forEach((n,i)=> pos.set(n.state,{x:PADX+r*COLW, y:PADY+i*ROWH}));
+  const W=PADX*2+(maxRank+1)*COLW, Hh=PADY*2+maxCol*ROWH;
+  const epaths = edges.map(e=>{ const a=pos.get(e.from), b=pos.get(e.to); if(!a||!b) return "";
+    const x1=a.x+NW, y1=a.y+NH/2, x2=b.x, y2=b.y+NH/2, mx=(x1+x2)/2;
+    const p=Number(e.p)||0, w=(1+p*5).toFixed(2), lx=(x1+x2)/2, ly=(y1+y2)/2-4;
+    const lbl=`${Math.round(p*100)}% · ${e.count}`;
+    return `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="${LCP.muted}" stroke-width="${w}" marker-end="url(#mkArrow)" opacity="0.7"><title>${lcEsc(e.from)} → ${lcEsc(e.to)} · p=${p.toFixed(4)} · n=${e.count}</title></path>`+
+      `<text x="${lx}" y="${ly}" fill="${LCP.muted}" font-size="9" text-anchor="middle">${lcEsc(lbl)}</text>`;
+  }).join("");
+  const rects = ordered.map(n=>{ const p=pos.get(n.state); if(!p) return ""; const col=flowNodeColor(n);
+    const cur = currentState && n.state===currentState;
+    const ring = cur ? `<rect x="${p.x-3}" y="${p.y-3}" width="${NW+6}" height="${NH+6}" rx="10" fill="none" stroke="${LCP.workflow}" stroke-width="2.5" opacity="0.95"/>` : "";
+    return `<g>${ring}<rect x="${p.x}" y="${p.y}" width="${NW}" height="${NH}" rx="8" fill="${LCP.panel2}" stroke="${col}" stroke-width="${cur?2.5:1.5}"/>`+
+      `<text x="${p.x+10}" y="${p.y+17}" fill="${col}" font-size="11" font-weight="700">${lcEsc(lcClip(n.state,16))}</text>`+
+      `<text x="${p.x+10}" y="${p.y+32}" fill="${LCP.muted}" font-size="10">n=${n.n}${cur?" · current":""}</text>`+
+      `<title>${lcEsc(n.state)} · ${lcEsc(n.kind)} · visited ${n.n}×</title></g>`;
+  }).join("");
+  const legend = `<div style="display:flex;gap:14px;margin-top:8px;font-size:11px;color:${LCP.muted};flex-wrap:wrap">`+
+    `<span><b style="color:${LCP.llm}">■</b> step</span><span><b style="color:${LCP.ok}">■</b> completed</span>`+
+    `<span><b style="color:${LCP.err}">■</b> failed</span><span><b style="color:#f97316">■</b> cancelled</span>`+
+    `<span><b style="color:${LCP.workflow}">■</b> holding</span><span>edge width ∝ probability</span></div>`;
+  return `<div class="panel" style="overflow:auto;max-height:70vh">${zoomControls()}<svg width="${W}" height="${Hh}" viewBox="0 0 ${W} ${Hh}" data-s="1">`+
+    `<defs><marker id="mkArrow" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L8,3 L0,6 Z" fill="${LCP.muted}"/></marker></defs>`+
+    `${epaths}${rects}</svg>${legend}</div>`;
+}
+
+// Bayesian outcome panel: P(completed/failed/cancelled) with Wilson CIs + a
+// HIGH/MED/LOW risk badge from P(fail). HONORS the server `insufficient` flag —
+// when set it shows "Insufficient data (N=k)" + observed tallies, NEVER a fake
+// point estimate. `currentState` (step:k) conditions the priors on that step;
+// `runId` fills the exact whitelisted cancel/resume command for a high-risk run.
+function bayesianPanel(fg, runId, currentState){
+  const priors=(fg&&fg.outcome_priors)||[];
+  if(!priors.length) return '<div class="empty">No terminal runs yet — no outcome priors for this type.</div>';
+  const m = currentState ? /^step:(\d+)$/.exec(String(currentState)) : null;
+  const condStep = m ? parseInt(m[1],10) : null;
+  const pick = o => (condStep!=null && priors.find(x=>x.outcome===o&&x.conditioned_on_step===condStep))
+                 || priors.find(x=>x.outcome===o&&x.conditioned_on_step==null);
+  const pc=pick("completed"), pf=pick("failed"), px=pick("cancelled"), ref=pf||pc||px;
+  const N = ref?ref.sample_size:(fg.sample_size||0);
+  const insuff = ref ? ref.insufficient : (fg.insufficient!==false);
+  const cond = condStep!=null ? ` · conditioned on <b style="color:${LCP.workflow}">step ${condStep}</b>` : " · unconditional (whole type)";
+  const head = `<div style="color:${LCP.muted};font-size:11px;margin-bottom:8px">Outcome probability${cond} · N=${N}</div>`;
+  if(insuff){
+    const oc=(fg&&fg.outcomes)||{};
+    return `<div class="panel">${head}`+
+      `<div style="color:#f59e0b;font-weight:700;margin-bottom:6px">⚠ Insufficient data (N=${N})</div>`+
+      `<div style="color:${LCP.muted};font-size:12px">Need ≥10 terminal runs for a reliable estimate. Observed so far: `+
+      `<b style="color:${LCP.ok}">${oc.completed||0} completed</b>, <b style="color:${LCP.err}">${oc.failed||0} failed</b>, `+
+      `<b style="color:#f97316">${oc.cancelled||0} cancelled</b>. <span style="color:${LCP.muted}">(no point estimate shown — small samples mislead).</span></div></div>`;
+  }
+  const bar = (label,p,col) => { if(!p) return "";
+    const v=(p.probability*100), lo=(p.ci_lo*100), hi=(p.ci_hi*100);
+    return `<div style="display:flex;align-items:center;gap:8px;margin:5px 0">`+
+      `<span style="width:84px;color:${col};font-weight:700">${label}</span>`+
+      `<div style="flex:1;background:${LCP.panel2};border-radius:5px;height:14px;overflow:hidden"><div style="width:${v.toFixed(1)}%;height:100%;background:${col}"></div></div>`+
+      `<span style="width:150px;text-align:right;color:${LCP.fg};font-size:12px">${v.toFixed(1)}% <span style="color:${LCP.muted}">(95% CI ${lo.toFixed(0)}–${hi.toFixed(0)}%)</span></span></div>`;
+  };
+  const bars = bar("completed",pc,LCP.ok)+bar("failed",pf,LCP.err)+bar("cancelled",px,"#f97316");
+  const pfail = pf?pf.probability:0;
+  const rk = pfail>0.3 ? {c:LCP.err,l:"HIGH"} : pfail>0.1 ? {c:"#f59e0b",l:"MED"} : {c:LCP.ok,l:"LOW"};
+  const idTok = runId ? String(runId) : "<id>";
+  const action = pfail>0.3
+    ? `<div style="margin-top:10px;padding:8px 10px;border:1px solid ${LCP.err};border-radius:6px;background:rgba(239,68,68,.08)">`+
+      `<div style="color:${LCP.err};font-weight:700;margin-bottom:4px">⚠ Elevated failure risk${condStep!=null?` at step ${condStep}`:""} — operability</div>`+
+      `<div style="color:${LCP.muted};font-size:12px;margin-bottom:4px">A run stuck here can be cancelled or resumed from the <b>Terminal</b> tab:</div>`+
+      `<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:${LCP.fg}">lumen kova "workflow ${lcEsc(idTok)} cancel"</div>`+
+      `<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:${LCP.fg}">lumen kova "workflow ${lcEsc(idTok)} resume &lt;input…&gt;"</div></div>`
+    : "";
+  return `<div class="panel">${head}`+
+    `<div style="margin-bottom:8px"><span style="background:${rk.c};color:#fff;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700">RISK ${rk.l}</span> `+
+    `<span style="color:${LCP.muted};font-size:12px">P(fail) = ${(pfail*100).toFixed(1)}%</span></div>`+
+    bars + action + `</div>`;
+}
 <!-- SHARED_RENDER_END -->
 
 /* ---------- data ---------- */
@@ -571,8 +684,8 @@ function renderAlarmPill() {
   el.textContent = `⚠ ${ALARMS.length} alarm${ALARMS.length>1?"s":""}${crit?` · ${crit} crit`:""}`;
   el.title = ALARMS.map(a=>`${a.status}: ${a.name}`).join("\n");
 }
-function setView(v){ VIEW=v; for (const t of ["overview","traces","lifecycle","metrics","terminal"]) document.getElementById("tab-"+t).classList.toggle("on", v===t); render(); }
-function render(){ if (VIEW==="overview") renderOverview(); else if (VIEW==="traces") renderTraces(); else if (VIEW==="lifecycle") renderLifecycle(); else if (VIEW==="metrics") renderMetrics(); else if (VIEW==="terminal") renderTerminal(); }
+function setView(v){ VIEW=v; for (const t of ["overview","traces","lifecycle","flow","metrics","terminal"]) document.getElementById("tab-"+t).classList.toggle("on", v===t); render(); }
+function render(){ if (VIEW==="overview") renderOverview(); else if (VIEW==="traces") renderTraces(); else if (VIEW==="lifecycle") renderLifecycle(); else if (VIEW==="flow") renderFlow(); else if (VIEW==="metrics") renderMetrics(); else if (VIEW==="terminal") renderTerminal(); }
 
 // Lifecycle tab: the whole-run story for the SELECTED trace, drawn by the shared
 // render block (the same code the offline `lumen export` HTML uses).
@@ -587,6 +700,78 @@ async function renderLifecycle(){
     root.innerHTML='<div style="max-width:1180px;margin:0 auto">'+bar+'<div id="lc-body"></div></div>';
     renderLifecycleInto(document.getElementById("lc-body"), lc);
   }catch(e){ root.innerHTML='<div class="empty" style="padding:48px">Failed to load lifecycle: '+esc(String(e))+'</div>'; }
+}
+
+/* ---------- flow tab (Markov transitions + Bayesian outcome risk) ----------
+   Type-level view: pick a workflow type → kova's server-computed FlowGraph
+   (single source, identical to Forge). markovFlow + bayesianPanel live in the
+   shared render block (so `lumen export` gets them free). Mount-once so the 4s
+   poll's re-render never wipes what the operator is typing. */
+function flowInputStyle(){ return `background:#0b0e14;border:1px solid var(--border,#2a3142);color:#e6e9ef;border-radius:6px;padding:7px 10px;font-size:13px`; }
+function flowControlsHtml(){
+  const b = `background:#161b27;border:1px solid #2a3142;color:#e6e9ef;border-radius:6px;cursor:pointer;font-size:13px;padding:7px 14px`;
+  return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">`+
+    `<input id="flow-type" placeholder="workflow type (e.g. expense_report)" value="${esc(FLOW_TYPE)}" style="${flowInputStyle()};min-width:240px" />`+
+    `<input id="flow-run" placeholder="run id (optional)" value="${esc(FLOW_RUN)}" style="${flowInputStyle()};width:150px" />`+
+    `<button id="flow-load" style="${b}">Load flow</button>`+
+    `<span style="color:var(--muted,#8b93a7);font-size:12px">state-transition graph + outcome probability for one workflow type</span></div>`;
+}
+function wireFlow(){
+  const btn=document.getElementById("flow-load"); if(btn) btn.addEventListener("click", loadFlow);
+  for(const id of ["flow-type","flow-run"]){ const el=document.getElementById(id);
+    if(el) el.addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); loadFlow(); } }); }
+}
+function flowBanners(fg){
+  let b="";
+  if(fg.mixed_spec_versions) b+=`<div class="recover-banner">⚠ <div><b>Multiple spec versions</b> in this population — transitions across versions aren't strictly comparable. Pass a specific <code>spec_hash</code> to narrow.</div></div>`;
+  if(fg.insufficient) b+=`<div class="recover-banner">📉 <div><b>Small sample (N=${fg.sample_size||0})</b> — outcome estimates are smoothed with wide intervals; treat as directional until ≥10 terminal runs.</div></div>`;
+  return b;
+}
+function renderFlowBody(){
+  const body=document.getElementById("flow-body"); if(!body) return;
+  if(!FLOW_TYPE){ body.innerHTML='<div class="empty" style="padding:40px">Enter a workflow type to see its state-transition graph + outcome probabilities.<br><br>The numbers come straight from kova (the same source Forge renders), so both surfaces always agree.</div>'; return; }
+  if(FLOW_ERR){ body.innerHTML='<div class="empty" style="padding:40px">'+esc(FLOW_ERR)+'</div>'; return; }
+  if(!FLOW_DATA){ body.innerHTML='<div class="empty" style="padding:40px">Loading flow…</div>'; return; }
+  const fg=FLOW_DATA;
+  const summary = `<div class="cards">`+
+    `<div class="card"><div class="k">runs (logical)</div><div class="v">${fg.total_runs||0}</div></div>`+
+    `<div class="card"><div class="k">terminal</div><div class="v">${fg.terminal_runs||0}</div></div>`+
+    `<div class="card"><div class="k">sample N</div><div class="v">${fg.sample_size||0}</div></div>`+
+    `<div class="card"><div class="k">in-flight</div><div class="v">${fg.has_in_flight_runs?"yes":"no"}</div></div></div>`;
+  const runId = FLOW_RUN ? FLOW_RUN : undefined;
+  // currentState (per-run conditioning + node glow) needs the run's current step,
+  // which the type-level Flow tab does not load — so it stays unconditional here
+  // (the run-id only fills the exact cancel/resume command). The renderers accept
+  // currentState for the export / Forge-parity grammar; Forge does the per-run
+  // overlay on its run-detail page (where the run detail is already loaded).
+  body.innerHTML = flowBanners(fg) + summary +
+    `<div class="section-title">State-transition flow (Markov)</div>`+ markovFlow(fg, undefined) +
+    `<div class="section-title">Outcome probability (Bayesian)</div>`+ bayesianPanel(fg, runId, undefined);
+}
+async function loadFlow(){
+  const tEl=document.getElementById("flow-type"), rEl=document.getElementById("flow-run");
+  FLOW_TYPE=((tEl&&tEl.value)||"").trim(); FLOW_RUN=((rEl&&rEl.value)||"").trim();
+  FLOW_DATA=null; FLOW_ERR="";
+  if(!FLOW_TYPE){ renderFlowBody(); return; }
+  renderFlowBody();                                  // show "Loading…"
+  try{
+    const r = await fetch("/api/flow?type="+encodeURIComponent(FLOW_TYPE));
+    const j = await r.json().catch(()=>null);
+    if(!r.ok || (j&&j.error)) FLOW_ERR = (j&&j.error) || ("kova flow request failed (HTTP "+r.status+")");
+    else FLOW_DATA = j;
+  }catch(e){ FLOW_ERR = "request failed: "+e; }
+  if(VIEW==="flow") renderFlowBody();
+}
+// Mount-once: build the controls only when absent so the 4s poll's re-render
+// never steals focus mid-type; only the result body re-renders (mirrors the
+// Terminal tab's mount-once discipline).
+function renderFlow(){
+  const root=document.getElementById("root");
+  if(!document.getElementById("flow-type")){
+    root.innerHTML = '<div style="max-width:1180px;margin:0 auto">'+flowControlsHtml()+'<div id="flow-body"></div></div>';
+    wireFlow();
+  }
+  renderFlowBody();
 }
 
 /* ---------- metrics (Netdata-backed) ---------- */

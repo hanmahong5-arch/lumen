@@ -391,6 +391,7 @@ fn route(
         ("GET", "/api/anomalies") => anomalies_response(netdata, query),
         ("GET", "/api/alarms") => alarms_response(netdata),
         ("GET", "/api/kova-status") => kova_status_response(kova),
+        ("GET", "/api/flow") => flow_response(kova, query),
         ("GET", "/export") => export_response(trace_dir, query),
         // `/api/traces/{id}/lifecycle` — the assembled lifecycle JSON for one run.
         ("GET", p) if p.starts_with("/api/traces/") && p.ends_with("/lifecycle") => {
@@ -513,6 +514,59 @@ fn kova_status_response(kova: Option<&dyn KovaControlClient>) -> Resp {
         })
         .to_string(),
     )
+}
+
+/// `GET /api/flow?type=<workflow_type>[&spec_hash=<hex>]` — proxy the kova
+/// workflow-type flow projection (Markov transitions + Bayesian outcome priors)
+/// to the browser. Reuses the server-side [`KovaControlClient::send`] GET seam,
+/// so the kova API key stays server-side and never reaches the page (same
+/// discipline as the Terminal console). Lumen NEVER re-aggregates — it renders
+/// exactly what kova returns, which is what keeps it in sync with Forge.
+///
+/// Degrades cleanly (never panics / 500s): `503` when kova is unconfigured or
+/// unreachable; kova's own `404` (unknown type) / `501` (no WAL) / `400` (bad
+/// spec_hash) are surfaced as `{error}` envelopes the Flow tab renders inline.
+fn flow_response(kova: Option<&dyn KovaControlClient>, query: &str) -> Resp {
+    let Some(wf_type) = query_param(query, "type").filter(|t| !t.is_empty()) else {
+        return bad_request("type is required");
+    };
+    let Some(client) = kova else {
+        return unavailable(
+            "Kova not configured. Restart with --kova-url (or set LUMEN_KOVA_URL).",
+        );
+    };
+    // Same '/'→%2F guard as the kova.rs / pull.rs id-bearing paths — a malformed
+    // type can't escape the `/workflows/types/` path.
+    let safe = wf_type.replace('/', "%2F");
+    let mut path = format!("/api/v1/workflows/types/{safe}/flow");
+    if let Some(hash) = query_param(query, "spec_hash").filter(|h| !h.is_empty()) {
+        path.push_str("?spec_hash=");
+        path.push_str(&hash.replace('/', "%2F"));
+    }
+    match client.send("GET", &path, None) {
+        // Pass the full JSON tree through verbatim (forward-compat: never re-parse
+        // into a typed struct here, or a new server field would be dropped).
+        Ok((200, body)) => ok_json(body.to_string()),
+        Ok((404, _)) => (
+            "404 Not Found",
+            CT_JSON,
+            json!({ "error": format!("no runs of workflow type `{wf_type}` in kova's WAL yet") })
+                .to_string(),
+        ),
+        Ok((501, _)) => (
+            "501 Not Implemented",
+            CT_JSON,
+            json!({ "error": "kova has no WAL configured — flow analytics unavailable" })
+                .to_string(),
+        ),
+        Ok((400, _)) => bad_request("invalid spec_hash (must be 64-char hex)"),
+        Ok((status, body)) => (
+            "502 Bad Gateway",
+            CT_JSON,
+            json!({ "error": format!("kova returned HTTP {status}"), "body": body }).to_string(),
+        ),
+        Err(e) => unavailable(&format!("kova unreachable: {e}")),
+    }
 }
 
 /// `POST /api/console` — interpret one whitelisted kova control verb. The body is
@@ -821,6 +875,85 @@ mod tests {
     fn unknown_route_is_404() {
         let (status, _, _) = rget("/nope", None);
         assert_eq!(status, "404 Not Found");
+    }
+
+    // ── flow proxy (Markov + Bayesian) ──────────────────────────────────────
+
+    /// `route` a GET against a kova stub — for the flow proxy tests.
+    fn rget_kova(path: &str, kova: &dyn KovaControlClient) -> Resp {
+        route("GET", path, b"", "./traces", None, Some(kova))
+    }
+
+    #[test]
+    fn flow_unconfigured_is_503() {
+        // No kova client → degrade to 503 (never 500), like the rest of the dash.
+        let r = rget("/api/flow?type=expense", None);
+        assert_eq!(r.0, "503 Service Unavailable");
+    }
+
+    #[test]
+    fn flow_requires_a_type() {
+        let stub = StubKova::ok(200, json!({}));
+        let r = rget_kova("/api/flow", &stub);
+        assert_eq!(r.0, "400 Bad Request");
+        assert!(
+            stub.calls.borrow().is_empty(),
+            "no upstream call when type is missing"
+        );
+    }
+
+    #[test]
+    fn flow_200_passes_through_verbatim_and_builds_canonical_path() {
+        let body = json!({"workflow_type":"expense","total_runs":3,"insufficient":true,"nodes":[],"edges":[]});
+        let stub = StubKova::ok(200, body.clone());
+        let r = rget_kova("/api/flow?type=expense", &stub);
+        assert_eq!(r.0, "200 OK");
+        assert_eq!(r.1, CT_JSON);
+        // Verbatim pass-through (forward-compat: never re-parsed into a typed
+        // struct, so a new server field is never dropped).
+        assert_eq!(body_json(&r), body);
+        assert_eq!(
+            stub.calls.borrow()[0],
+            (
+                "GET".to_string(),
+                "/api/v1/workflows/types/expense/flow".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn flow_spec_hash_rides_into_the_kova_path() {
+        let stub = StubKova::ok(200, json!({"workflow_type":"x"}));
+        let _ = rget_kova("/api/flow?type=x&spec_hash=abc123", &stub);
+        assert_eq!(
+            stub.calls.borrow()[0].1,
+            "/api/v1/workflows/types/x/flow?spec_hash=abc123"
+        );
+    }
+
+    #[test]
+    fn flow_404_and_501_become_inline_envelopes() {
+        let r404 = rget_kova("/api/flow?type=ghost", &StubKova::ok(404, json!({})));
+        assert_eq!(r404.0, "404 Not Found");
+        assert!(
+            body_json(&r404)["error"]
+                .as_str()
+                .unwrap()
+                .contains("ghost")
+        );
+        let r501 = rget_kova("/api/flow?type=x", &StubKova::ok(501, json!({})));
+        assert_eq!(r501.0, "501 Not Implemented");
+    }
+
+    #[test]
+    fn flow_unreachable_kova_is_503_not_500() {
+        let stub = StubKova {
+            resp: Err("kova unreachable: connection refused".to_string()),
+            calls: RefCell::new(Vec::new()),
+            reachable: false,
+        };
+        let r = rget_kova("/api/flow?type=x", &stub);
+        assert_eq!(r.0, "503 Service Unavailable");
     }
 
     #[test]

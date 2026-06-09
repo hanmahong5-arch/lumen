@@ -10,6 +10,7 @@
 pub mod causal_types;
 pub mod cost;
 pub mod error;
+pub mod flow_types;
 pub mod lifecycle;
 pub mod lifecycle_builder;
 pub mod pricing;
