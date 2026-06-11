@@ -391,6 +391,7 @@ fn route(
         ("GET", "/api/anomalies") => anomalies_response(netdata, query),
         ("GET", "/api/alarms") => alarms_response(netdata),
         ("GET", "/api/kova-status") => kova_status_response(kova),
+        ("GET", "/api/advisory") => advisory_response(kova),
         ("GET", "/api/flow") => flow_response(kova, query),
         ("GET", "/export") => export_response(trace_dir, query),
         // `/api/traces/{id}/lifecycle` — the assembled lifecycle JSON for one run.
@@ -514,6 +515,30 @@ fn kova_status_response(kova: Option<&dyn KovaControlClient>) -> Resp {
         })
         .to_string(),
     )
+}
+
+/// `GET /api/advisory` — proxy kova's governor advisory snapshot
+/// (`GET /api/v1/governor/advisories`) to the browser, key held server-side
+/// (same discipline as the console / flow proxies). The advisory card polls
+/// this; pass-through verbatim so new server fields are never dropped.
+///
+/// Degrades cleanly: `503 {error}` when kova is unconfigured or unreachable
+/// (the card hides itself), `502` envelope on an unexpected upstream status.
+fn advisory_response(kova: Option<&dyn KovaControlClient>) -> Resp {
+    let Some(client) = kova else {
+        return unavailable(
+            "Kova not configured. Restart with --kova-url (or set LUMEN_KOVA_URL).",
+        );
+    };
+    match client.send("GET", "/api/v1/governor/advisories", None) {
+        Ok((200, body)) => ok_json(body.to_string()),
+        Ok((status, body)) => (
+            "502 Bad Gateway",
+            CT_JSON,
+            json!({ "error": format!("kova returned HTTP {status}"), "body": body }).to_string(),
+        ),
+        Err(e) => unavailable(&format!("kova unreachable: {e}")),
+    }
 }
 
 /// `GET /api/flow?type=<workflow_type>[&spec_hash=<hex>]` — proxy the kova
@@ -1170,6 +1195,43 @@ mod tests {
         let v = body_json(&r);
         assert_eq!(v["configured"], json!(true));
         assert_eq!(v["reachable"], json!(false));
+    }
+
+    #[test]
+    fn advisory_proxy_passes_through_and_degrades() {
+        // Configured + reachable: pass-through verbatim (no re-parse).
+        let stub = StubKova::ok(
+            200,
+            json!({"advisories": [{"scenario": "agent_stall"}], "policy": {"autonomy_level": "advise"}}),
+        );
+        let r = route("GET", "/api/advisory", b"", "./traces", None, Some(&stub));
+        assert_eq!(r.0, "200 OK");
+        let v = body_json(&r);
+        assert_eq!(v["advisories"][0]["scenario"], json!("agent_stall"));
+        assert_eq!(
+            stub.calls.borrow()[0],
+            ("GET".to_string(), "/api/v1/governor/advisories".to_string()),
+            "the proxy must hit kova's governor endpoint"
+        );
+
+        // Unconfigured: clean 503 so the card hides itself.
+        let r = route("GET", "/api/advisory", b"", "./traces", None, None);
+        assert_eq!(r.0, "503 Service Unavailable");
+
+        // Transport failure: 503, never a panic.
+        let down = StubKova {
+            resp: Err("connection refused".into()),
+            calls: RefCell::new(Vec::new()),
+            reachable: false,
+        };
+        let r = route("GET", "/api/advisory", b"", "./traces", None, Some(&down));
+        assert_eq!(r.0, "503 Service Unavailable");
+
+        // Unexpected upstream status (e.g. an old kova without the governor):
+        // 502 envelope the card treats as "no advisories".
+        let old = StubKova::ok(404, json!({"error": "no such route"}));
+        let r = route("GET", "/api/advisory", b"", "./traces", None, Some(&old));
+        assert_eq!(r.0, "502 Bad Gateway");
     }
 
     /// `route` a `POST /api/console` with the given JSON body.

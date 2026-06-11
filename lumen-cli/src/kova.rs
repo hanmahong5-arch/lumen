@@ -48,6 +48,7 @@ pub const KOVA_VERBS: &[&str] = &[
     "workflow",
     "awaiting",
     "approvals",
+    "advisory",
     "schedules",
     "schedule",
     "tools",
@@ -170,6 +171,11 @@ pub enum KovaCommand {
     /// `GET /approvals` — pending HITL approvals (kova's curated projection, a
     /// distinct endpoint from `/workflows/awaiting`).
     Approvals,
+    /// `GET /governor/advisories` — the governor's active advisory set
+    /// (budget tier, stalled agents, Bayesian risk) + effective policy.
+    /// Rendered by [`render_advisories`] (advice text + a suggested console
+    /// command), not the generic table renderer.
+    Advisories,
     /// `GET /workflows/schedules`
     Schedules,
     /// `GET /workflows/schedules/{id}`
@@ -381,6 +387,10 @@ impl KovaCommand {
                 "awaiting-input workflows",
             ),
             Self::Approvals => Plan::get("/api/v1/approvals".to_string(), "approvals"),
+            Self::Advisories => Plan::get(
+                "/api/v1/governor/advisories".to_string(),
+                "governor advisories",
+            ),
             Self::Schedules => Plan::get("/api/v1/workflows/schedules".to_string(), "schedules"),
             Self::ScheduleGet(id) => Plan::get(
                 format!("/api/v1/workflows/schedules/{}", encode_segment(id)),
@@ -488,6 +498,7 @@ pub fn parse_command(line: &str) -> Result<KovaCommand, ParseError> {
         "workflows" => no_args(rest, KovaCommand::Workflows, "workflows"),
         "awaiting" => no_args(rest, KovaCommand::Awaiting, "awaiting"),
         "approvals" => no_args(rest, KovaCommand::Approvals, "approvals"),
+        "advisory" => no_args(rest, KovaCommand::Advisories, "advisory"),
         "schedules" => no_args(rest, KovaCommand::Schedules, "schedules"),
         "tools" => no_args(rest, KovaCommand::Tools, "tools"),
         "queues" => no_args(rest, KovaCommand::Queues, "queues"),
@@ -693,8 +704,90 @@ pub fn run_line(client: &dyn KovaControlClient, line: &str, confirm: bool) -> Co
         ));
     }
     match client.send(plan.method, &plan.path, plan.body.as_ref()) {
+        // Advisories get a purpose-built rendering (advice + suggested
+        // command) instead of the generic table/JSON fallback.
+        Ok((status, value)) if status < 400 && cmd == KovaCommand::Advisories => {
+            ConsoleOutcome::Output(render_advisories(&value))
+        }
         Ok((status, value)) => ConsoleOutcome::Output(render_result(&plan, status, &value)),
         Err(e) => ConsoleOutcome::Output(format!("✗ {e}")),
+    }
+}
+
+/// Render `GET /governor/advisories`: one block per advisory (severity icon,
+/// scenario, subject, prediction, recommended action, and — where one of the
+/// whitelisted console verbs can act on it — a suggested command), plus the
+/// effective policy line. Pure; unit-tested.
+#[must_use]
+pub fn render_advisories(value: &Value) -> String {
+    let advisories = value
+        .get("advisories")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut out = String::new();
+    if let Some(p) = value.get("policy") {
+        let g = |k: &str| p.get(k).map(cell_str).unwrap_or_default();
+        out.push_str(&format!(
+            "governor: autonomy={}  n_min={}  ci_width_max={}  warn={}  gate={}\n",
+            g("autonomy_level"),
+            g("n_min"),
+            g("ci_width_max"),
+            g("fail_prob_warn"),
+            g("fail_prob_gate"),
+        ));
+    }
+    if advisories.is_empty() {
+        out.push_str("✓ no active advisories");
+        return out;
+    }
+    for a in &advisories {
+        let s = |k: &str| a.get(k).and_then(Value::as_str).unwrap_or("");
+        let icon = match s("severity") {
+            "critical" => "✗",
+            "warn" => "⚠",
+            _ => "ℹ",
+        };
+        out.push_str(&format!(
+            "{icon} [{}] {} — {}\n",
+            s("severity"),
+            s("scenario"),
+            s("subject")
+        ));
+        if !s("prediction").is_empty() {
+            out.push_str(&format!("   {}\n", truncate(s("prediction"), 200)));
+        }
+        if !s("recommended_action").is_empty() {
+            out.push_str(&format!(
+                "   → {}\n",
+                truncate(s("recommended_action"), 200)
+            ));
+        }
+        if let Some(cmd) = console_suggestion(s("scenario"), s("subject")) {
+            out.push_str(&format!("   ↳ try: {cmd}\n"));
+        } else if !s("one_click_rest").is_empty() {
+            out.push_str(&format!("   ↳ rest: {}\n", s("one_click_rest")));
+        }
+    }
+    out.push_str(&format!(
+        "({} advisor{})",
+        advisories.len(),
+        if advisories.len() == 1 { "y" } else { "ies" }
+    ));
+    out
+}
+
+/// Map an advisory `(scenario, subject)` to the whitelisted console command
+/// that starts acting on it, when one exists. The dashboard JS mirrors this
+/// mapping for the advisory card's click-through (a Rust test pins both).
+#[must_use]
+pub fn console_suggestion(scenario: &str, subject: &str) -> Option<String> {
+    match scenario {
+        "agent_stall" => Some(format!("agent {subject} history")),
+        "risk_run" => Some(format!("workflow {subject}")),
+        s if s.starts_with("budget_") => Some("status".to_string()),
+        // risk_start's natural surface is the Flow tab, not a console verb.
+        _ => None,
     }
 }
 
@@ -736,6 +829,7 @@ pub fn help_text() -> String {
      \x20 workflows | workflow <id>   workflow runs | one run\n\
      \x20 awaiting                    workflows awaiting input\n\
      \x20 approvals                   pending HITL approvals\n\
+     \x20 advisory                    governor advisories (budget / stall / risk)\n\
      \x20 schedules | schedule <id>   recurring schedules\n\
      \x20 tools | queues | traces | trace <id> | llm\n\
      \n\
@@ -1426,6 +1520,99 @@ mod tests {
             KovaCommand::Awaiting.to_request().path,
             "/api/v1/workflows/awaiting"
         );
+    }
+
+    #[test]
+    fn advisory_verb_maps_to_governor_endpoint() {
+        assert_eq!(parse_command("advisory").unwrap(), KovaCommand::Advisories);
+        assert_eq!(
+            KovaCommand::Advisories.to_request().path,
+            "/api/v1/governor/advisories"
+        );
+        assert!(parse_command("advisory extra").is_err());
+        assert!(KOVA_VERBS.contains(&"advisory"));
+    }
+
+    #[test]
+    fn render_advisories_lists_advice_and_suggested_command() {
+        let body = json!({
+            "advisories": [{
+                "advisory_id": "agent_stall:wedged-1",
+                "severity": "warn",
+                "scenario": "agent_stall",
+                "subject": "wedged-1",
+                "evidence": {"idle_ms": 700_000},
+                "prediction": "no trace activity for 700 s",
+                "recommended_action": "inspect the agent's history",
+                "one_click_rest": "GET /api/v1/agents/wedged-1/history",
+                "created_at_ms": 1
+            }],
+            "policy": {
+                "autonomy_level": "advise", "n_min": 10, "ci_width_max": 0.4,
+                "fail_prob_warn": 0.5, "fail_prob_gate": 0.8,
+                "eval_interval_secs": 30, "stall_threshold_secs": 600
+            }
+        });
+        let out = render_advisories(&body);
+        assert!(out.contains("autonomy=advise"), "{out}");
+        assert!(out.contains("⚠ [warn] agent_stall — wedged-1"), "{out}");
+        assert!(out.contains("no trace activity"), "{out}");
+        assert!(out.contains("↳ try: agent wedged-1 history"), "{out}");
+        assert!(out.contains("(1 advisory)"), "{out}");
+    }
+
+    #[test]
+    fn render_advisories_empty_is_a_green_tick() {
+        let out = render_advisories(&json!({"advisories": [], "policy": {
+            "autonomy_level": "advise", "n_min": 10, "ci_width_max": 0.4,
+            "fail_prob_warn": 0.5, "fail_prob_gate": 0.8
+        }}));
+        assert!(out.contains("✓ no active advisories"), "{out}");
+    }
+
+    #[test]
+    fn console_suggestion_covers_actionable_scenarios() {
+        assert_eq!(
+            console_suggestion("agent_stall", "a-1").as_deref(),
+            Some("agent a-1 history")
+        );
+        assert_eq!(
+            console_suggestion("risk_run", "42").as_deref(),
+            Some("workflow 42")
+        );
+        assert_eq!(
+            console_suggestion("budget_soft_warn", "llm-cost-budget").as_deref(),
+            Some("status")
+        );
+        assert_eq!(
+            console_suggestion("budget_hard_cap", "llm-cost-budget").as_deref(),
+            Some("status")
+        );
+        // risk_start routes to the Flow tab, not a console verb.
+        assert_eq!(console_suggestion("risk_start", "t"), None);
+    }
+
+    #[test]
+    fn run_line_advisory_uses_custom_renderer() {
+        struct AdvStub;
+        impl KovaControlClient for AdvStub {
+            fn send(&self, m: &str, p: &str, _b: Option<&Value>) -> Result<(u16, Value), String> {
+                assert_eq!((m, p), ("GET", "/api/v1/governor/advisories"));
+                Ok((
+                    200,
+                    json!({"advisories": [], "policy": {"autonomy_level": "advise"}}),
+                ))
+            }
+            fn status(&self) -> KovaStatus {
+                KovaStatus::Reachable
+            }
+        }
+        match run_line(&AdvStub, "advisory", false) {
+            ConsoleOutcome::Output(t) => {
+                assert!(t.contains("✓ no active advisories"), "{t}");
+            }
+            other => panic!("expected output, got {other:?}"),
+        }
     }
 
     #[test]
