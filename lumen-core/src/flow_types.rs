@@ -194,7 +194,10 @@ mod tests {
         // A smoothed prior is never a bare 1.0 / 0.0.
         let c = fg.prior_for("completed", None).unwrap();
         assert!(c.probability < 1.0 && c.probability > 0.0);
-        assert!(c.ci_lo <= c.probability || c.ci_hi >= c.probability);
+        // The Wilson interval must bracket the point estimate (`||` here was a
+        // tautology — for any finite floats at least one side holds, so it
+        // never caught an interval that fails to contain `probability`).
+        assert!(c.ci_lo <= c.probability && c.probability <= c.ci_hi);
     }
 
     #[test]

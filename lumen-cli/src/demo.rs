@@ -54,6 +54,12 @@ Ledger: [{\"id\":\"l1\",\"amount\":-100.00},{\"id\":\"l2\",\"amount\":-55.00},\
 const DEMO_MAX_ITERATIONS: u32 = 4;
 /// Cost budget (USD). The scenario spends ~$0.001; this is a generous fence.
 const DEMO_COST_BUDGET_USD: f64 = 0.05;
+/// Daily LLM budget (CNY) for the EPHEMERAL instance only — squeezed so the
+/// demo's own LLM spend (~0.002–0.006 CNY on deepseek-chat) crosses the soft
+/// (80%) threshold and kova's governor emits a real `budget_*` advisory: the
+/// observe→advise feedback loop, demonstrated with measured numbers, in one
+/// run. Never applied to a `--kova-url` instance (we don't touch real config).
+const DEMO_DAILY_BUDGET_CNY: &str = "0.003";
 
 /// How long to wait for a freshly-spawned `kova-rest` to answer `/status`.
 const READY_TIMEOUT: Duration = Duration::from_secs(25);
@@ -199,6 +205,9 @@ pub fn spawn_ephemeral(bin: &Path, llm: &LlmEnv) -> Result<SpawnedKova, String> 
         // The reconcile tool is what gives the lifecycle a real tool-call causal
         // edge; enable it on the instance we own.
         .env("KOVA_RECONCILE_ENABLED", "1")
+        // Squeeze the daily budget so the run's real spend trips the governor's
+        // budget early-warning — the demo then shows a live advisory.
+        .env("KOVA_LLM_COST_DAILY_BUDGET_CNY", DEMO_DAILY_BUDGET_CNY)
         .env("KOVA_LLM_API_KEY", &llm.api_key)
         .env("KOVA_LLM_PROVIDER", &llm.provider)
         .env("KOVA_LLM_MODEL", &llm.model)
@@ -314,6 +323,41 @@ pub fn run_canned_scenario(client: &HttpKovaClient) -> Result<String, String> {
     Err(format!(
         "demo run did not complete within {RUN_TIMEOUT:?} (LLM slow or unreachable)"
     ))
+}
+
+/// Fetch the governor's active advisory set (best-effort, read-only). Returns
+/// the advisory array — empty when none fired, `None` when the endpoint is
+/// absent (older kova) or unreachable. The demo prints whatever ACTUALLY
+/// happened; it never fabricates an advisory.
+#[must_use]
+pub fn governor_advisories(client: &HttpKovaClient) -> Option<Vec<Value>> {
+    match client.send("GET", "/api/v1/governor/advisories", None) {
+        Ok((200, body)) => Some(
+            body.get("advisories")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+        ),
+        _ => None,
+    }
+}
+
+/// Render one advisory as the demo's two-line summary (icon + scenario +
+/// prediction). Pure; unit-tested.
+#[must_use]
+pub fn advisory_line(advisory: &Value) -> String {
+    let s = |k: &str| advisory.get(k).and_then(Value::as_str).unwrap_or("");
+    let icon = match s("severity") {
+        "critical" => "✗",
+        "warn" => "⚠",
+        _ => "ℹ",
+    };
+    format!(
+        "{icon} {} [{}] — {}",
+        s("scenario"),
+        s("subject"),
+        s("prediction")
+    )
 }
 
 /// Extract the newest `recent_traces[*]` whose status is terminal
@@ -433,6 +477,31 @@ mod tests {
     #[test]
     fn locate_returns_none_for_bad_explicit() {
         assert!(locate_kova_rest(Some("/no/such/kova-rest-binary-xyz")).is_none());
+    }
+
+    #[test]
+    fn advisory_line_renders_severity_and_prediction() {
+        let a = json!({
+            "severity": "warn",
+            "scenario": "budget_soft_warn",
+            "subject": "llm-cost-budget",
+            "prediction": "hard cap in ~2.1 h (linear extrapolation)"
+        });
+        let line = advisory_line(&a);
+        assert!(line.starts_with('⚠'), "{line}");
+        assert!(
+            line.contains("budget_soft_warn [llm-cost-budget]"),
+            "{line}"
+        );
+        assert!(line.contains("linear extrapolation"), "{line}");
+    }
+
+    #[test]
+    fn demo_budget_squeeze_is_a_positive_cny_amount() {
+        // The squeezed budget must parse and be > 0 — kova treats <= 0 as
+        // "tracker not constructed", which would silently kill the demo beat.
+        let v: f64 = DEMO_DAILY_BUDGET_CNY.parse().unwrap();
+        assert!(v > 0.0);
     }
 
     #[test]

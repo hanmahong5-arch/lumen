@@ -146,6 +146,18 @@
   /* metrics tab: ML anomaly ribbons, alarm pill, config card, deep-link */
   .alarmpill { background: rgba(239,68,68,.15); color: #fca5a5; border: 1px solid rgba(239,68,68,.4); padding: 4px 11px; border-radius: 999px; font-size: 11.5px; font-weight: 700; cursor: pointer; white-space: nowrap; }
   .alarmpill:hover { background: rgba(239,68,68,.24); }
+
+  /* governor advisory card: fixed right, severity-colored, click-to-act
+     (pre-fills the Terminal — execution still goes through its confirm flow) */
+  #advisory-card { position: fixed; right: 18px; top: 64px; width: 304px; z-index: 40; background: var(--panel); border: 1px solid var(--border2); border-radius: 12px; padding: 10px 12px; box-shadow: 0 10px 40px rgba(0,0,0,.45); }
+  .adv-h { font-weight: 700; font-size: 12.5px; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+  .adv-n { background: rgba(245,158,11,.18); color: #fcd34d; border-radius: 999px; padding: 1px 8px; font-size: 11px; }
+  .adv-row { display: flex; gap: 8px; padding: 7px 6px; border-radius: 8px; cursor: pointer; align-items: flex-start; }
+  .adv-row:hover { background: var(--bg2); }
+  .adv-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; margin-top: 4px; }
+  .adv-t { font-size: 12px; font-weight: 600; }
+  .adv-p { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+  .adv-f { color: var(--muted2); font-size: 10.5px; margin-top: 6px; }
   .ribbon-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
   .ribbon-row .rl { color: var(--muted); font-size: 11px; min-width: 78px; text-transform: uppercase; letter-spacing: .4px; }
   .ribbon-row .rv { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; min-width: 44px; text-align: right; }
@@ -203,6 +215,7 @@
 
 <div class="wrap" id="root"><div class="empty">Loading traces…</div></div>
 <div id="tip"></div>
+<div id="advisory-card" style="display:none"></div>
 
 <script>
 const C = { llm:"#3b82f6", tool:"#8b5cf6", ckpt:"#64748b", err:"#ef4444", unknown:"#888", ok:"#22c55e", warn:"#f59e0b" };
@@ -223,7 +236,7 @@ let TERM_HIST = [], TERM_HISTI = 0, TERM_PENDING = null;
 let FLOW_TYPE = "", FLOW_RUN = "", FLOW_DATA = null, FLOW_ERR = "";
 // Top-level verbs for tab-completion (mirror of kova.rs KOVA_VERBS; a Rust test
 // asserts this list and KOVA_VERBS stay in sync).
-const KOVA_VERBS = ["status","config","agents","agent","workflows","workflow","awaiting","approvals","schedules","schedule","tools","queues","traces","trace","llm","help","clear"];
+const KOVA_VERBS = ["status","config","agents","agent","workflows","workflow","awaiting","approvals","advisory","schedules","schedule","tools","queues","traces","trace","llm","help","clear"];
 
 const fmtUsd = n => { const v = n||0; return "$" + v.toFixed(v<0.01?5:4); };
 const fmtTok = n => n>=1000 ? (n/1000).toFixed(1)+"k" : String(n||0);
@@ -683,6 +696,59 @@ function renderAlarmPill() {
   el.style.display = "";
   el.textContent = `⚠ ${ALARMS.length} alarm${ALARMS.length>1?"s":""}${crit?` · ${crit} crit`:""}`;
   el.title = ALARMS.map(a=>`${a.status}: ${a.name}`).join("\n");
+}
+/* ---------- governor advisory card (闭环: kova advises, the human acts) ----
+   Polls /api/advisory (a server-side proxy of kova's governor snapshot) every
+   30s. Click-through pre-fills the Terminal with the matching whitelisted verb
+   (the SAME mapping as kova.rs console_suggestion — a Rust test pins both) or
+   jumps to the Flow tab for type-level risk; execution always goes through the
+   Terminal's existing confirm flow — the card never calls kova itself. */
+let ADVISORIES = [];
+async function loadAdvisories(){
+  try{
+    const r = await fetch("/api/advisory");
+    const j = r.ok ? await r.json() : null;
+    ADVISORIES = (j && j.advisories) || [];
+  }catch(e){ ADVISORIES = []; }
+  renderAdvisoryCard();
+}
+function renderAdvisoryCard(){
+  const el = document.getElementById("advisory-card"); if(!el) return;
+  if(!ADVISORIES.length){ el.style.display = "none"; el.innerHTML = ""; return; }
+  const SEV = {critical:"#ef4444", warn:"#f59e0b", info:"#22c55e"};
+  const rows = ADVISORIES.map(a=>{
+    const c = SEV[a.severity] || "#8b93a7";
+    const pred = String(a.prediction||"");
+    return `<div class="adv-row" onclick="advisoryAction('${jsAttr(a.scenario)}','${jsAttr(a.subject)}')" title="${esc(a.recommended_action||"")}">`+
+      `<span class="adv-dot" style="background:${c}"></span>`+
+      `<div><div class="adv-t">${esc(a.scenario)} · ${esc(a.subject)}</div>`+
+      `<div class="adv-p">${esc(pred.length>140 ? pred.slice(0,139)+"…" : pred)}</div></div></div>`;
+  }).join("");
+  el.innerHTML = `<div class="adv-h">🛡 governor <span class="adv-n">${ADVISORIES.length}</span></div>`+rows+
+    `<div class="adv-f">click to act — runs through the Terminal confirm flow</div>`;
+  el.style.display = "";
+}
+function advisoryAction(scenario, subject){
+  if(scenario === "risk_start"){           // type-level risk → Flow tab
+    FLOW_TYPE = subject; FLOW_DATA = null; FLOW_ERR = "";
+    setView('flow');
+    const el = document.getElementById("flow-type"); if(el) el.value = subject;
+    loadFlow();
+    return;
+  }
+  // Mirror of kova.rs console_suggestion — keep in lockstep (Rust drift test).
+  const line = scenario === "agent_stall" ? "agent "+subject+" history"
+    : scenario === "risk_run" ? "workflow "+subject
+    : "status";
+  setView('terminal');
+  termPrefill(line, 0);
+}
+// The Terminal mounts lazily (reachability probe → render), so retry briefly
+// until its input exists, then pre-fill WITHOUT submitting (human presses ⏎).
+function termPrefill(line, tries){
+  const inp = document.getElementById("terminput");
+  if(inp){ inp.value = line; inp.focus(); return; }
+  if(tries < 20) setTimeout(()=>termPrefill(line, tries+1), 100);
 }
 function setView(v){ VIEW=v; for (const t of ["overview","traces","lifecycle","flow","metrics","terminal"]) document.getElementById("tab-"+t).classList.toggle("on", v===t); render(); }
 function render(){ if (VIEW==="overview") renderOverview(); else if (VIEW==="traces") renderTraces(); else if (VIEW==="lifecycle") renderLifecycle(); else if (VIEW==="flow") renderFlow(); else if (VIEW==="metrics") renderMetrics(); else if (VIEW==="terminal") renderTerminal(); }
@@ -1158,6 +1224,8 @@ document.getElementById("live").addEventListener("click", ()=>{ LIVE=!LIVE; cons
 
 load();
 setInterval(()=>{ if(LIVE) load(); }, 4000);
+loadAdvisories();
+setInterval(loadAdvisories, 30000);
 </script>
 </body>
 </html>

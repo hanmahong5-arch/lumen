@@ -6,7 +6,9 @@ build-backend = "hatchling.build"
 name = "lumen-ai"
 version = "0.2.1"
 description = "Developer tools for AI agent reliability — replay, cost tracking, crash recovery"
-readme = "../README.md"
+# Kept as a copy of the repo-root README: a "../README.md" reference leaks a
+# path-traversal member into the sdist, which PEP 706 extraction filters reject.
+readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 dependencies = [

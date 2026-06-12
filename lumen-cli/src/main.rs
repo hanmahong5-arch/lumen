@@ -599,6 +599,24 @@ fn cmd_demo(
         }
     };
 
+    // Governor beat (闭环): the ephemeral instance runs with a squeezed daily
+    // budget, so the run's REAL spend should have tripped kova's budget
+    // early-warning. Print whatever actually fired — measured numbers only,
+    // and say so plainly when nothing fired.
+    match demo::governor_advisories(&client) {
+        Some(advisories) if !advisories.is_empty() => {
+            println!("  \x1b[33m⚙ governor advisories (kova watched the run and reacted):\x1b[0m");
+            for a in &advisories {
+                println!("    {}", demo::advisory_line(a));
+            }
+            println!("    → see them live: dashboard advisory card, or `lumen kova advisory`");
+        }
+        Some(_) => {
+            println!("  governor: no advisory fired (spend stayed under the soft budget threshold)")
+        }
+        None => println!("  governor: advisory endpoint unavailable (older kova-rest build?)"),
+    }
+
     // Fetch the run (trace + lifecycle sidecars) and render the HTML.
     let fetcher = pull::HttpFetcher::new(&url, key);
     if let Err(e) = lifecycle_load::fetch_run_into_dir(&fetcher, dir, &run_id, None) {
