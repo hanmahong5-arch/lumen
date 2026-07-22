@@ -12,7 +12,8 @@ Usage::
     client = openai.OpenAI()
     response = client.chat.completions.create(model="gpt-4o", messages=[...])
 
-Install with: ``pip install "lumen-ai[openai]"``
+Install from the ``lumen-sdk`` source directory: ``pip install -e ".[openai]"``
+(the package is not published on PyPI).
 """
 
 from __future__ import annotations

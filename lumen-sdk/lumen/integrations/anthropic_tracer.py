@@ -11,7 +11,8 @@ Usage::
     client = anthropic.Anthropic()
     message = client.messages.create(model="claude-sonnet-4-6", ...)
 
-Install with: ``pip install "lumen-ai[anthropic]"``
+Install from the ``lumen-sdk`` source directory: ``pip install -e ".[anthropic]"``
+(the package is not published on PyPI).
 """
 
 from __future__ import annotations

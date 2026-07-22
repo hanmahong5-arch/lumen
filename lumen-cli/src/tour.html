@@ -6,8 +6,8 @@
 <title>Lumen · capability tour</title>
 <style>
   :root{
-    --bg:#0b0e14; --panel:#11151f; --panel2:#161b27; --border:#1f2533; --border2:#2a3142;
-    --fg:#e6e9ef; --muted:#8b93a7; --grad1:#5b9dff; --grad2:#a855f7;
+    --bg:#0a0c12; --panel:#12161f; --panel2:#171c28; --border:#1f2533; --border2:#2a3145;
+    --fg:#e6e9ef; --muted:#7c8699; --grad1:#5b9dff; --grad2:#a855f7;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--fg);
@@ -24,7 +24,7 @@
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(258px,1fr));gap:14px}
   a.tcard{display:block;text-decoration:none;color:var(--fg);
     background:var(--panel2);border:1px solid var(--border);border-radius:12px;
-    padding:16px 18px;transition:border-color .15s,transform .15s}
+    padding:16px 18px}
   a.tcard:hover{border-color:var(--grad1);transform:translateY(-2px)}
   a.tcard .cap{font-weight:800;font-size:15px;
     background:linear-gradient(90deg,var(--grad1),var(--grad2));
@@ -36,6 +36,29 @@
   .empty{color:var(--muted);padding:18px;text-align:center;background:var(--panel2);
     border:1px dashed var(--border2);border-radius:10px}
   footer{padding:18px 26px;color:var(--muted);font-size:11px;border-top:1px solid var(--border);margin-top:30px}
+
+  /* ── elegance layer (offline-safe: motion, depth, quiet scrollbars) ──────
+     Additive polish; self-contained (no CDN/external refs) so the exported
+     single file still opens anywhere. Mirrors the live dashboard's feel and
+     lifecycle.html's own copy of this block. */
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion: no-preference){
+    a.tcard{transition:border-color .15s ease,transform .15s cubic-bezier(.2,.7,.2,1),box-shadow .2s ease}
+  }
+  a.tcard:hover{box-shadow:0 10px 26px rgba(0,0,0,.30)}
+  header .brand{filter:drop-shadow(0 0 14px rgba(122,140,255,.32))}
+  *{scrollbar-width:thin;scrollbar-color:var(--border2) transparent}
+  *::-webkit-scrollbar{width:10px;height:10px}
+  *::-webkit-scrollbar-track{background:transparent}
+  *::-webkit-scrollbar-thumb{background:var(--border2);border-radius:8px;border:2px solid transparent;background-clip:padding-box}
+  *::-webkit-scrollbar-thumb:hover{background:var(--muted)}
+
+  /* visible keyboard focus (was: none — mouse-only; a.tcard is a real <a>, so
+     it is already in the tab order, it just had no visible ring) */
+  a.tcard:focus-visible{outline:2px solid var(--grad1);outline-offset:2px;border-radius:12px}
+  :focus:not(:focus-visible){outline:none}
+
+  @media (max-width:640px){.wrap{padding:16px 14px}}
 </style>
 </head>
 <body>

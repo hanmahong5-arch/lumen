@@ -7,7 +7,7 @@
 <style>
   :root {
     --bg: #0a0c12; --bg2: #0d1018; --panel: #12161f; --panel2: #171c28; --border: #1f2533;
-    --border2: #2a3145; --text: #d3dbe8; --muted: #6b7689; --muted2: #4a5266;
+    --border2: #2a3145; --text: #d3dbe8; --muted: #7c8699; --muted2: #7c8699;
     --accent: #5b9dff; --accent2: #a855f7;
     --llm: #3b82f6; --tool: #8b5cf6; --ckpt: #64748b; --err: #ef4444;
     --ok: #22c55e; --warn: #f59e0b; --recover: #a855f7; --cyan: #22d3ee;
@@ -190,19 +190,81 @@
   .term-line .pr { color: var(--accent2); font-weight: 700; flex: none; font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; }
   .term-line input { flex: 1; background: transparent; border: none; outline: none; color: var(--text); font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; font-size: 12.5px; caret-color: var(--accent); }
   .term-line input::placeholder { color: var(--muted2); }
+
+  /* ── elegance layer — motion, depth, focus, responsive ──────────────────
+     Purely additive polish layered over the rules above (no existing rule is
+     changed): smooth state transitions, a subtle lift on cards, quiet custom
+     scrollbars, keyboard focus rings, refined empty states, and mobile
+     breakpoints. Motion is gated on prefers-reduced-motion. */
+  @media (prefers-reduced-motion: no-preference) {
+    nav.tabs button, .kpi, .panel, .card, .trace-item, .bar-fill, .span,
+    .deeplink, .alarmpill, .fnode, .fend, .fckpt, .hrow, .adv-row, .legend .lg,
+    .term-line input, .live, .ribbon > span { transition: background-color .16s ease, color .16s ease, border-color .16s ease, box-shadow .2s ease, transform .18s cubic-bezier(.2,.7,.2,1), filter .16s ease; }
+  }
+  /* a quiet lift on the small stat cards (not the large content panels) */
+  .kpi:hover, .card:hover { transform: translateY(-2px); border-color: var(--border2); box-shadow: 0 10px 26px rgba(0,0,0,.32); }
+  .kpi:hover::before { opacity: 1; }
+  .panel:hover { border-color: var(--border2); }
+  header .brand .grad { filter: drop-shadow(0 0 14px rgba(122,140,255,.35)); }
+
+  /* quiet, on-theme scrollbars (was: default chunky OS bars over a dark UI) */
+  * { scrollbar-width: thin; scrollbar-color: var(--border2) transparent; }
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+  *::-webkit-scrollbar-thumb:hover { background: var(--muted2); }
+  html { scroll-behavior: smooth; }
+
+  /* visible keyboard focus (was: none — mouse-only) */
+  button:focus-visible, input:focus-visible, [onclick]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+  :focus:not(:focus-visible) { outline: none; }
+
+  /* a warmer, more guided empty state */
+  .empty { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .empty::before { content: ""; width: 40px; height: 40px; border-radius: 12px; background: radial-gradient(circle at 50% 40%, rgba(91,157,255,.28), rgba(168,85,247,.10) 70%, transparent); box-shadow: inset 0 0 0 1px var(--border2); animation: emptyPulse 3s ease-in-out infinite; }
+  @keyframes emptyPulse { 0%,100% { opacity: .55; transform: scale(1);} 50% { opacity: 1; transform: scale(1.06);} }
+
+  /* loading skeleton — a moving-light sweep over the real .kpi/.panel/.card/
+     .term shapes, so the first paint mirrors the eventual layout instead of a
+     bare "Loading…" line. No new spacing/radius tokens: reuses those classes'
+     own border-radius. Motion gated on prefers-reduced-motion. */
+  .skel-shimmer { position: relative; overflow: hidden; color: transparent; }
+  .skel-shimmer::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(255,255,255,.06), transparent); }
+  @media (prefers-reduced-motion: no-preference) {
+    .skel-shimmer::after { animation: skelSweep 1.6s ease-in-out infinite; }
+  }
+  @keyframes skelSweep { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+
+  /* responsive: the 6/12-col grids collapse gracefully on narrow viewports */
+  @media (max-width: 1180px) {
+    .kpis { grid-template-columns: repeat(3, 1fr); }
+    .cards { grid-template-columns: repeat(3, 1fr); }
+  }
+  @media (max-width: 900px) {
+    .col-4, .col-6, .col-8 { grid-column: span 12; }
+    .tview { grid-template-columns: 1fr; }
+    .wrap { padding: 16px 14px; }
+  }
+  @media (max-width: 680px) {
+    header { flex-wrap: wrap; gap: 10px 14px; padding: 11px 14px; }
+    nav.tabs { order: 3; width: 100%; overflow-x: auto; }
+    .hstats { margin-left: auto; gap: 14px; }
+    .kpis, .cards { grid-template-columns: repeat(2, 1fr); }
+    #advisory-card { position: static; width: auto; margin-bottom: 14px; }
+  }
 </style>
 </head>
 <body>
 <header>
   <div class="brand"><span class="grad">Lumen.</span></div>
   <div class="tag">agent observability</div>
-  <nav class="tabs">
-    <button id="tab-overview" class="on" onclick="setView('overview')">Overview</button>
-    <button id="tab-traces" onclick="setView('traces')">Traces</button>
-    <button id="tab-lifecycle" onclick="setView('lifecycle')">Lifecycle</button>
-    <button id="tab-flow" onclick="setView('flow')">Flow</button>
-    <button id="tab-metrics" onclick="setView('metrics')">Metrics</button>
-    <button id="tab-terminal" onclick="setView('terminal')">Terminal</button>
+  <nav class="tabs" role="tablist">
+    <button id="tab-overview" class="on" role="tab" aria-selected="true" onclick="setView('overview')">Overview</button>
+    <button id="tab-traces" role="tab" aria-selected="false" onclick="setView('traces')">Traces</button>
+    <button id="tab-lifecycle" role="tab" aria-selected="false" onclick="setView('lifecycle')">Lifecycle</button>
+    <button id="tab-flow" role="tab" aria-selected="false" onclick="setView('flow')">Flow</button>
+    <button id="tab-metrics" role="tab" aria-selected="false" onclick="setView('metrics')">Metrics</button>
+    <button id="tab-terminal" role="tab" aria-selected="false" onclick="setView('terminal')">Terminal</button>
   </nav>
   <div class="hstats">
     <div class="hstat"><div class="v" id="s-runs">—</div><div class="k">runs</div></div>
@@ -221,6 +283,10 @@
 const C = { llm:"#3b82f6", tool:"#8b5cf6", ckpt:"#64748b", err:"#ef4444", unknown:"#888", ok:"#22c55e", warn:"#f59e0b" };
 const PALETTE = ["#5b9dff","#a855f7","#22d3ee","#f59e0b","#22c55e","#ec4899","#14b8a6","#f97316"];
 let TRACES = [], SELECTED = null, LIVE = true, VIEW = "overview", FILTER = "";
+// Set when the last /api/traces fetch failed (network/server error), so the
+// empty-state renderers can tell "kova unreachable" apart from "genuinely no
+// traces yet" instead of showing the same "No traces yet." copy for both.
+let LOAD_ERROR = false;
 // Netdata-backed Metrics tab state. NETDATA: {configured, reachable}; ALARMS:
 // active health alarms; METRIC_WINDOW: a per-run deep-link window (absolute
 // start/end ms so the relative query is recomputed correctly on each refresh).
@@ -303,8 +369,8 @@ function donut(items, label) {
    SHARED_RENDER markers; extracted verbatim into the offline export HTML, so it
    must NOT reference anything outside this block: own helpers, own palette, own
    colors as hex. Operates purely on a Lifecycle JSON object `lc`). ---------- */
-const LCP = { panel2:"#161b27", border:"#1f2533", border2:"#2a3142", fg:"#e6e9ef",
-  muted:"#8b93a7", bg:"#0b0e14", ok:"#22c55e", err:"#ef4444", llm:"#3b82f6",
+const LCP = { panel2:"#171c28", border:"#1f2533", border2:"#2a3145", fg:"#e6e9ef",
+  muted:"#7c8699", bg:"#0a0c12", ok:"#22c55e", err:"#ef4444", llm:"#3b82f6",
   recovery:"#ec4899", workflow:"#22d3ee", swarm:"#f59e0b" };
 const LC_LANES = [
   {id:"Llm", label:"LLM", color:"#3b82f6"},
@@ -657,15 +723,41 @@ function bayesianPanel(fg, runId, currentState){
 }
 <!-- SHARED_RENDER_END -->
 
+// Loading skeleton — mimics the final layout (KPI/panel grid, lifecycle cards,
+// or the terminal shell) via .skel-shimmer so the first paint isn't a bare
+// "Loading…" line. Reuses the real .kpi/.panel/.card/.term classes for shape.
+function skeletonHtml(kind) {
+  const ghost = cls => `<div class="${cls} skel-shimmer" aria-hidden="true"></div>`;
+  if (kind === "lifecycle") {
+    return `<div style="max-width:1180px;margin:0 auto" role="status" aria-live="polite" aria-label="Loading lifecycle">
+      <div class="cards">${Array.from({length:5},()=>ghost("card")).join("")}</div>
+      ${ghost("panel")}
+    </div>`;
+  }
+  if (kind === "terminal") {
+    return `<div role="status" aria-live="polite" aria-label="Connecting to Kova">${ghost("term")}</div>`;
+  }
+  return `<div role="status" aria-live="polite" aria-label="Loading traces">
+    <div class="kpis">${Array.from({length:6},()=>ghost("kpi")).join("")}</div>
+    <div class="grid">${ghost("panel col-6")}${ghost("panel col-6")}${ghost("panel col-4")}${ghost("panel col-4")}${ghost("panel col-4")}</div>
+  </div>`;
+}
+
 /* ---------- data ---------- */
 async function load() {
-  try { TRACES = await (await fetch("/api/traces")).json(); } catch(e) { TRACES = []; }
+  // Preserve scroll position across the 4s poll: Overview/Traces rebuild
+  // #root's innerHTML wholesale on every refresh, which otherwise resets
+  // scrollTop to 0 mid-read (a long-list scroll-jump the audit flagged).
+  const scrollY = window.scrollY;
+  try { TRACES = await (await fetch("/api/traces")).json(); LOAD_ERROR = false; }
+  catch(e) { TRACES = []; LOAD_ERROR = true; }
   await loadNetdataMeta();               // status + alarms (best-effort, never blocks traces)
   const cost = TRACES.reduce((a,t)=>a+(t.total_cost_usd||0),0);
   const tok = TRACES.reduce((a,t)=>a+(t.total_tokens?.prompt_tokens||0)+(t.total_tokens?.completion_tokens||0),0);
   s_runs.textContent = TRACES.length; s_cost.textContent = fmtUsd(cost); s_tok.textContent = fmtTok(tok);
   if (!SELECTED && TRACES.length) SELECTED = TRACES[0].trace_id;
   render();
+  if (VIEW === "overview" || VIEW === "traces") window.scrollTo(0, scrollY);
 }
 // Refresh Netdata reachability + active alarms. Drives the header alarm pill on
 // every tab; the Metrics tab reads NETDATA to choose config-card vs live panels.
@@ -750,7 +842,7 @@ function termPrefill(line, tries){
   if(inp){ inp.value = line; inp.focus(); return; }
   if(tries < 20) setTimeout(()=>termPrefill(line, tries+1), 100);
 }
-function setView(v){ VIEW=v; for (const t of ["overview","traces","lifecycle","flow","metrics","terminal"]) document.getElementById("tab-"+t).classList.toggle("on", v===t); render(); }
+function setView(v){ VIEW=v; for (const t of ["overview","traces","lifecycle","flow","metrics","terminal"]) { const el=document.getElementById("tab-"+t); const on=v===t; el.classList.toggle("on", on); el.setAttribute("aria-selected", on?"true":"false"); } render(); }
 function render(){ if (VIEW==="overview") renderOverview(); else if (VIEW==="traces") renderTraces(); else if (VIEW==="lifecycle") renderLifecycle(); else if (VIEW==="flow") renderFlow(); else if (VIEW==="metrics") renderMetrics(); else if (VIEW==="terminal") renderTerminal(); }
 
 // Lifecycle tab: the whole-run story for the SELECTED trace, drawn by the shared
@@ -758,7 +850,7 @@ function render(){ if (VIEW==="overview") renderOverview(); else if (VIEW==="tra
 async function renderLifecycle(){
   const root=document.getElementById("root");
   if(!SELECTED){ root.innerHTML='<div class="empty" style="padding:48px">Select a trace in the <b>Traces</b> tab first, then open Lifecycle.</div>'; return; }
-  root.innerHTML='<div class="empty" style="padding:40px">Building lifecycle…</div>';
+  root.innerHTML = skeletonHtml("lifecycle");
   try{
     const lc = await (await fetch("/api/traces/"+encodeURIComponent(SELECTED)+"/lifecycle")).json();
     if(lc && lc.error){ root.innerHTML='<div class="empty" style="padding:48px">'+esc(lc.error)+'</div>'; return; }
@@ -965,7 +1057,7 @@ function renderTerminal() {
     fetch("/api/kova-status").then(r=>r.json())
       .then(j=>{ KOVA = {configured:!!j.configured, reachable:!!j.reachable, loaded:true}; if (VIEW==="terminal") renderTerminal(); })
       .catch(()=>{ KOVA = {configured:false, reachable:false, loaded:true}; if (VIEW==="terminal") renderTerminal(); });
-    root.innerHTML = `<div class="empty">Connecting to Kova…</div>`;
+    root.innerHTML = skeletonHtml("terminal");
     return;
   }
   if (!KOVA.configured) { root.innerHTML = kovaCfgCard(); return; }
@@ -1065,7 +1157,12 @@ function termComplete(inp) {
 /* ---------- overview ---------- */
 function renderOverview() {
   const root = document.getElementById("root");
-  if (!TRACES.length) { root.innerHTML = `<div class="empty">No traces yet.<br><br>Pull from a running Kova:<br><br><code>lumen pull --kova-url http://&lt;host&gt;:3010 --api-key &lt;key&gt;</code></div>`; return; }
+  if (!TRACES.length) {
+    root.innerHTML = LOAD_ERROR
+      ? `<div class="empty">Can't reach the trace store.<br><br>Check that <code>lumen dashboard</code> is running and pointed at the right <code>--trace-dir</code> — this refreshes automatically once it responds.</div>`
+      : `<div class="empty">No traces yet.<br><br>Pull from a running Kova:<br><br><code>lumen pull --kova-url http://&lt;host&gt;:3010 --api-key &lt;key&gt;</code></div>`;
+    return;
+  }
 
   const runs = TRACES.length;
   const cost = TRACES.reduce((a,t)=>a+(t.total_cost_usd||0),0);
@@ -1123,7 +1220,7 @@ function recentTable() {
   return `<div class="hist">` + TRACES.map(t=>{
     const si=statusInfo(t.status); const steps=t.steps.length;
     const anomaly = mean>0 && t.total_cost_usd>mean*2;
-    return `<div class="hrow" style="grid-template-columns:18px 1fr 90px 80px 90px 70px;cursor:pointer" onclick="SELECTED='${jsAttr(t.trace_id)}';setView('traces')">
+    return `<div class="hrow" style="grid-template-columns:18px 1fr 90px 80px 90px 70px;cursor:pointer" tabindex="0" role="button" onclick="SELECTED='${jsAttr(t.trace_id)}';setView('traces')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
       <span class="sdot" style="background:${si.dot};width:9px;height:9px;border-radius:50%"></span>
       <div class="ty"><span class="lab"><b>${esc(t.agent_id)}</b> <span style="color:var(--muted)">${esc(t.trace_id)}</span></span>${t.parent_trace_id?'<span class="recover" style="color:var(--recover)">⟳</span>':''}</div>
       <div class="tok">${steps} steps</div>
@@ -1145,11 +1242,15 @@ function renderTraces() {
 function renderList() {
   const el = document.getElementById("list"); if (!el) return;
   const items = TRACES.filter(t => !FILTER || (t.agent_id+t.trace_id).toLowerCase().includes(FILTER.toLowerCase()));
-  if (!items.length) { el.innerHTML = '<div class="empty" style="padding:36px 16px">No matching traces.</div>'; return; }
+  if (!items.length) {
+    const msg = LOAD_ERROR ? "Can't reach the trace store." : (FILTER ? "No matching traces." : "No traces yet.");
+    el.innerHTML = `<div class="empty" style="padding:36px 16px">${msg}</div>`;
+    return;
+  }
   const mean = TRACES.reduce((a,t)=>a+(t.total_cost_usd||0),0)/Math.max(TRACES.length,1);
   el.innerHTML = items.map(t=>{
     const si=statusInfo(t.status); const anomaly=mean>0&&t.total_cost_usd>mean*2;
-    return `<div class="trace-item ${t.trace_id===SELECTED?'sel':''}" onclick="SELECTED='${jsAttr(t.trace_id)}';renderList();renderDetail()">
+    return `<div class="trace-item ${t.trace_id===SELECTED?'sel':''}" tabindex="0" role="button" aria-pressed="${t.trace_id===SELECTED}" onclick="SELECTED='${jsAttr(t.trace_id)}';renderList();renderDetail()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
       <div class="top"><span class="sdot" style="background:${si.dot}"></span><span class="name">${esc(t.agent_id)}</span>${anomaly?'<span title="cost outlier (&gt; 2× run mean) — offline flag, not Netdata ML" style="margin-left:auto;color:var(--warn)">⚠</span>':''}</div>
       <div class="meta"><span>${t.steps.length} steps</span><span>${fmtUsd(t.total_cost_usd)}</span><span>${fmtDur(traceDur(t))}</span>${t.parent_trace_id?'<span class="recover">⟳ recovered</span>':''}</div></div>`;
   }).join("");
@@ -1222,6 +1323,7 @@ function showTip(ev, enc){ const p=JSON.parse(decodeURIComponent(enc)); tip.inne
 function hideTip(){ tip.style.display="none"; }
 document.getElementById("live").addEventListener("click", ()=>{ LIVE=!LIVE; const e=document.getElementById("live"); e.classList.toggle("off",!LIVE); document.getElementById("live-t").textContent=LIVE?"live":"paused"; });
 
+document.getElementById("root").innerHTML = skeletonHtml("overview");
 load();
 setInterval(()=>{ if(LIVE) load(); }, 4000);
 loadAdvisories();

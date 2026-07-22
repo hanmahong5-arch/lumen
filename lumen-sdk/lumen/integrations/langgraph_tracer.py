@@ -20,7 +20,8 @@ Example::
     # lumen cost --last 24h --trace-dir ./traces
     # lumen replay <trace-id> --trace-dir ./traces
 
-Install with: ``pip install "lumen-ai[langgraph]"``
+Install from the ``lumen-sdk`` source directory: ``pip install -e ".[langgraph]"``
+(the package is not published on PyPI).
 """
 
 from __future__ import annotations
@@ -56,9 +57,10 @@ class LumenTracer(_Base):  # type: ignore[misc]
         trace_dir: Directory to write trace JSON files.
         agent_name: Name to identify this agent in traces.
 
-    Requires ``langchain-core>=0.3``. Install with::
+    Requires ``langchain-core>=0.3``. Install from the ``lumen-sdk``
+    source directory::
 
-        pip install "lumen-ai[langgraph]"
+        pip install -e ".[langgraph]"
     """
 
     def __init__(

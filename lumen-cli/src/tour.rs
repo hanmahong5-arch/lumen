@@ -9,8 +9,10 @@
 //! (reuses the export's visual theme) — no server, no CDN, opens offline.
 
 /// The card-grid index shell. `__COUNT__` and `__CARDS__` are filled at render
-/// time; a drift-guard test asserts both placeholders exist.
-const TOUR_HTML: &str = include_str!("tour.html");
+/// time; a drift-guard test asserts both placeholders exist. `pub(crate)` so
+/// dashboard.rs's cross-file palette drift test can read it too (see P0 in the
+/// UI audit — dashboard.html/lifecycle.html/tour.html must share one palette).
+pub(crate) const TOUR_HTML: &str = include_str!("tour.html");
 
 /// One capability card: a driven run, its label, and a one-line narration.
 #[derive(Debug, Clone, PartialEq, Eq)]

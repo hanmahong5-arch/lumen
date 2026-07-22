@@ -1117,6 +1117,42 @@ mod tests {
         assert_eq!(query_param(q, "missing"), None);
     }
 
+    /// P0 anti-drift guard: the dashboard's `:root` chrome palette, its inline
+    /// `LCP` JS mirror (baked into the offline lifecycle export — must stay a
+    /// literal, never a CSS var reference), and the two offline-export shells'
+    /// (`lifecycle.html`, `tour.html`) `:root` palettes must all agree on these
+    /// hex literals, or a tab switch (or an exported/tour file) shows a visible
+    /// color seam. See doc/coord/ui-industrial-audit-2026-07-07.md, P0.
+    #[test]
+    fn chrome_palette_is_byte_identical_across_dashboard_lifecycle_and_tour() {
+        let shared_hex = [
+            "#0a0c12", "#12161f", "#171c28", "#1f2533", "#2a3145", "#7c8699",
+        ];
+        for hex in shared_hex {
+            assert!(
+                INDEX_HTML.contains(hex),
+                "dashboard.html (root vars or LCP mirror) missing `{hex}`"
+            );
+            assert!(
+                LIFECYCLE_HTML.contains(hex),
+                "lifecycle.html :root missing `{hex}`"
+            );
+            assert!(
+                crate::tour::TOUR_HTML.contains(hex),
+                "tour.html :root missing `{hex}`"
+            );
+        }
+        // The LCP mirror specifically (not just the CSS :root) must carry the
+        // literal hex — it is extracted into the offline export and so cannot
+        // depend on a CSS custom property there.
+        for hex in ["#171c28", "#2a3145", "#7c8699", "#0a0c12"] {
+            assert!(
+                INDEX_HTML.matches(hex).count() >= 2,
+                "expected `{hex}` in both dashboard.html :root and its LCP JS mirror"
+            );
+        }
+    }
+
     /// JS↔Rust drift guard: the dashboard JS replicates the per-run cost-outlier
     /// multiplier inline (`mean*2` in three spots). If lumen-core's
     /// `COST_ANOMALY_MULTIPLIER` ever changes, this forces the HTML to be updated

@@ -333,13 +333,17 @@ fn test_replay_surfaces_recovery_marker() {
     let dir = dir_with_one_trace("recovery", &trace);
 
     let replay = ReplayEngine::new(&dir).replay("trace_resumed").unwrap();
-    let recovery = replay.recovery.expect("recovered run should carry recovery info");
+    let recovery = replay
+        .recovery
+        .expect("recovered run should carry recovery info");
     assert_eq!(recovery.parent_trace_id, "trace_original");
     assert_eq!(recovery.resumed_at_iteration, Some(4));
 
     // A fresh run (no parent_trace_id) carries no recovery info.
     let fresh_dir = setup_trace_dir();
-    let fresh = ReplayEngine::new(&fresh_dir).replay("trace_abc123").unwrap();
+    let fresh = ReplayEngine::new(&fresh_dir)
+        .replay("trace_abc123")
+        .unwrap();
     assert!(fresh.recovery.is_none());
 
     cleanup(&fresh_dir);
@@ -421,7 +425,10 @@ fn test_cost_falls_back_to_estimate_when_total_is_zero() {
         "expected estimate {expected}, got {}",
         report.total_usd
     );
-    assert!(report.total_usd > 0.0, "fallback must produce a non-zero estimate");
+    assert!(
+        report.total_usd > 0.0,
+        "fallback must produce a non-zero estimate"
+    );
 
     cleanup(&dir);
 }

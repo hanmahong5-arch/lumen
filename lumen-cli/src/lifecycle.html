@@ -6,8 +6,8 @@
 <title>Lumen · lifecycle __RUN_ID__</title>
 <style>
   :root{
-    --bg:#0b0e14; --panel:#11151f; --panel2:#161b27; --border:#1f2533; --border2:#2a3142;
-    --fg:#e6e9ef; --muted:#8b93a7; --grad1:#5b9dff; --grad2:#a855f7;
+    --bg:#0a0c12; --panel:#12161f; --panel2:#171c28; --border:#1f2533; --border2:#2a3145;
+    --fg:#e6e9ef; --muted:#7c8699; --grad1:#5b9dff; --grad2:#a855f7;
     --llm:#3b82f6; --tool:#8b5cf6; --wait:#64748b; --workflow:#22d3ee; --swarm:#f59e0b;
     --recovery:#ec4899; --ok:#22c55e; --err:#ef4444;
   }
@@ -33,6 +33,22 @@
     border:1px dashed var(--border2);border-radius:10px}
   footer{padding:18px 26px;color:var(--muted);font-size:11px;border-top:1px solid var(--border);margin-top:30px}
   a{color:var(--grad1)}
+
+  /* ── elegance layer (offline-safe: motion, depth, quiet scrollbars) ──────
+     Additive polish; self-contained (no CDN/external refs) so the exported
+     single file still opens anywhere. Mirrors the live dashboard's feel. */
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion: no-preference){
+    .card,.panel{transition:transform .18s cubic-bezier(.2,.7,.2,1),box-shadow .2s ease,border-color .16s ease}
+  }
+  .card:hover{transform:translateY(-2px);border-color:var(--border2);box-shadow:0 10px 26px rgba(0,0,0,.30)}
+  header .brand{filter:drop-shadow(0 0 14px rgba(122,140,255,.32))}
+  *{scrollbar-width:thin;scrollbar-color:var(--border2) transparent}
+  *::-webkit-scrollbar{width:10px;height:10px}
+  *::-webkit-scrollbar-track{background:transparent}
+  *::-webkit-scrollbar-thumb{background:var(--border2);border-radius:8px;border:2px solid transparent;background-clip:padding-box}
+  *::-webkit-scrollbar-thumb:hover{background:var(--muted)}
+  @media (max-width:640px){.wrap{padding:16px 14px}}
 </style>
 </head>
 <body>

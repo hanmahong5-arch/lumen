@@ -21,7 +21,8 @@ Example::
     # Traces enable: lumen replay / lumen cost
     # Zero external services. Zero configuration.
 
-Install with: ``pip install "lumen-ai[langgraph]"``
+Install from the ``lumen-sdk`` source directory: ``pip install -e ".[langgraph]"``
+(the package is not published on PyPI).
 """
 
 from __future__ import annotations
@@ -60,9 +61,10 @@ class LumenCheckpointer(_Base):  # type: ignore[misc]
     Implements the 4 core methods required by ``BaseCheckpointSaver``:
     ``get_tuple``, ``list``, ``put``, ``put_writes``.
 
-    Requires ``langgraph-checkpoint>=2.0``. Install with::
+    Requires ``langgraph-checkpoint>=2.0``. Install from the ``lumen-sdk``
+    source directory::
 
-        pip install lumen-ai[langgraph]
+        pip install -e ".[langgraph]"
     """
 
     def __init__(self, storage_dir: str = "./checkpoints") -> None:
@@ -91,7 +93,10 @@ class LumenCheckpointer(_Base):  # type: ignore[misc]
         Otherwise returns the latest checkpoint for the thread.
         """
         if not _HAS_LANGGRAPH:
-            raise RuntimeError("langgraph-checkpoint not installed. Run: pip install lumen-ai[langgraph]")
+            raise RuntimeError(
+                "langgraph-checkpoint not installed. From the lumen-sdk source "
+                "directory run: pip install -e '.[langgraph]'"
+            )
 
         thread_id = config["configurable"]["thread_id"]
         checkpoint_ns = config["configurable"].get("checkpoint_ns", "")
