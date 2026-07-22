@@ -1,0 +1,183 @@
+# Lumen CLI Release — pre-built binaries, closed-source path
+#
+# Mirrors the kova sidecar-release pattern (2b-svc-kova release.yml): tag →
+# per-triple binaries → SHA256SUMS → optional minisign. NO crates.io publish —
+# the `lumen-cli` name on crates.io is an unrelated third-party project and
+# this source stays private.
+#
+# Consumers:
+#   - Forge backend's lifecycle-export leg (`FORGE_LUMEN_BIN`) — operators
+#     download the triple matching their forge host.
+#   - Direct CLI users (pilot deliveries) — verify via SHA256SUMS(+.minisig).
+#
+# Trigger: tags `lumen-cli-v*` (the SDK path keeps its own `lumen-sdk-v*`).
+# NOTE: workflow is inert while the account's GitHub Actions billing is
+# blocked (same wall as kova CI) — owner-gated, see repo docs/INSTALL.md
+# for the from-source fallback that stays the supported path meanwhile.
+
+name: Release lumen-cli
+
+on:
+  push:
+    tags:
+      - "lumen-cli-v[0-9]+.[0-9]+.[0-9]+"
+      - "lumen-cli-v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
+  pull_request:
+    paths:
+      - ".github/workflows/release-lumen-cli.yaml"
+  workflow_dispatch: {}
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  # Gate first: this repo has no other Rust CI, so the release path carries
+  # its own full gate — a tag build with red tests must never ship.
+  gate:
+    name: Gate (test + clippy + fmt)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --locked
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Format
+        run: cargo fmt --check
+
+  build:
+    name: lumen (${{ matrix.target }})
+    needs: [gate]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            ext: ""
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            ext: ".exe"
+          - target: aarch64-apple-darwin
+            os: macos-14
+            ext: ""
+          - target: x86_64-apple-darwin
+            os: macos-13
+            ext: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-auditable (if missing)
+        shell: bash
+        run: command -v cargo-auditable >/dev/null 2>&1 || cargo install cargo-auditable --locked
+
+      - name: Build lumen (release)
+        # `cargo auditable build` embeds the dependency list in the binary so
+        # `cargo audit bin` can scan it offline for known CVEs after release
+        # (same posture as the kova build-delivery design).
+        run: cargo auditable build --release --locked --target ${{ matrix.target }} -p lumen-cli
+
+      - name: Stage version-less asset
+        # Version-less names (the tag carries the version) so downstream
+        # `gh release download --pattern "lumen-<triple>[.exe]"` stays stable
+        # across releases — same convention as the kova-rest sidecars.
+        shell: bash
+        run: |
+          mkdir -p out
+          cp "target/${{ matrix.target }}/release/lumen${{ matrix.ext }}" \
+             "out/lumen-${{ matrix.target }}${{ matrix.ext }}"
+          ls -lh out/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumen-${{ matrix.target }}
+          path: out/lumen-${{ matrix.target }}${{ matrix.ext }}
+
+  release:
+    name: Create Release
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: ${{ startsWith(github.ref, 'refs/tags/lumen-cli-v') }}
+    # `if:` cannot safely test `secrets.*` directly — mirror into env at job
+    # level and gate steps on env (same pattern as kova release.yml).
+    env:
+      HAS_MINISIGN: ${{ secrets.MINISIGN_SECRET_KEY != '' && secrets.MINISIGN_PASSWORD != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download lumen artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: lumen-*
+
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          missing=""
+          for triple in x86_64-unknown-linux-gnu x86_64-pc-windows-msvc aarch64-apple-darwin x86_64-apple-darwin; do
+            found=""
+            for f in artifacts/lumen-${triple}/lumen-${triple}*; do
+              if [ -e "$f" ]; then
+                cp "$f" "release/$(basename "$f")"
+                chmod +x "release/$(basename "$f")" || true
+                found=1
+              fi
+            done
+            [ -n "$found" ] || missing="$missing $triple"
+          done
+          # Third-party license notices ship with the binaries.
+          cp THIRD-PARTY-NOTICES.md release/
+          ls -lh release/
+          # Refuse an incomplete release: a missing triple would silently break
+          # `FORGE_LUMEN_BIN` provisioning on that platform. Fail loudly.
+          if [ -n "$missing" ]; then
+            echo "::error::Missing lumen binary for:$missing — refusing to publish an incomplete release."
+            exit 1
+          fi
+
+      - name: Generate SHA256SUMS
+        working-directory: release
+        run: |
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Install minisign (if missing)
+        if: env.HAS_MINISIGN == 'true'
+        run: command -v minisign >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y minisign)
+
+      - name: Sign SHA256SUMS with minisign
+        # Skips cleanly when the owner hasn't provisioned a keypair yet —
+        # release still ships, just without the .minisig (kova P0 #1 pattern).
+        if: env.HAS_MINISIGN == 'true'
+        working-directory: release
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          key_file="$RUNNER_TEMP/minisign.key"
+          printf '%s' "$MINISIGN_SECRET_KEY" > "$key_file"
+          printf '%s\n' "$MINISIGN_PASSWORD" | minisign -S -m SHA256SUMS -s "$key_file"
+          rm -f "$key_file"
+          ls -la SHA256SUMS.minisig
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
