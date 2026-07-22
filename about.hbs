@@ -1,0 +1,24 @@
+# Third-Party Notices
+
+This file lists the third-party Rust crates statically linked into the `lumen`
+CLI binary (workspace members `lumen-core` + `lumen-cli`) and the licenses
+under which they are distributed. Generated with `cargo about generate`.
+
+{{#each overview}}
+- {{{name}}} ({{id}}): {{count}} crate(s)
+{{/each}}
+
+{{#each licenses}}
+---
+
+## {{{name}}} ({{id}})
+
+Used by:
+{{#each used_by}}
+- {{crate.name}} {{crate.version}}
+{{/each}}
+
+```
+{{{text}}}
+```
+{{/each}}
