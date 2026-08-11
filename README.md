@@ -234,6 +234,12 @@ Your Python code → **Lumen SDK** (`lumen-ai`: cost tracking, anomaly detection
 LangGraph CheckpointSaver + Tracer callback) → **Lumen Core** (Rust, embedded: replay engine,
 cost aggregation, pricing tables) → your LLM provider (OpenAI, Anthropic, etc.).
 
+## Release tags
+
+A plain `vX.Y.Z` tag (e.g. `v0.3.0`) fires both `publish-lumen-sdk.yaml` and
+`release-lumen-cli.yaml` in one push. The per-artifact prefixes `lumen-sdk-vX.Y.Z`
+and `lumen-cli-vX.Y.Z` still work if you need to ship one side only.
+
 ## License
 
 MIT
