@@ -10,7 +10,9 @@
 #     download the triple matching their forge host.
 #   - Direct CLI users (pilot deliveries) — verify via SHA256SUMS(+.minisig).
 #
-# Trigger: tags `lumen-cli-v*` (the SDK path keeps its own `lumen-sdk-v*`).
+# Trigger: tags `lumen-cli-v*` (the SDK path keeps its own `lumen-sdk-v*`),
+# plus a shared `vX.Y.Z` tag that fires both release workflows at once — see
+# README "Release tags" for the convention.
 # NOTE: workflow is inert while the account's GitHub Actions billing is
 # blocked (same wall as kova CI) — owner-gated, see repo docs/INSTALL.md
 # for the from-source fallback that stays the supported path meanwhile.
@@ -22,6 +24,7 @@ on:
     tags:
       - "lumen-cli-v[0-9]+.[0-9]+.[0-9]+"
       - "lumen-cli-v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+"
   pull_request:
     paths:
       - ".github/workflows/release-lumen-cli.yaml"
@@ -110,7 +113,7 @@ jobs:
     name: Create Release
     needs: [build]
     runs-on: ubuntu-latest
-    if: ${{ startsWith(github.ref, 'refs/tags/lumen-cli-v') }}
+    if: ${{ startsWith(github.ref, 'refs/tags/lumen-cli-v') || startsWith(github.ref, 'refs/tags/v') }}
     # `if:` cannot safely test `secrets.*` directly — mirror into env at job
     # level and gate steps on env (same pattern as kova release.yml).
     env:
