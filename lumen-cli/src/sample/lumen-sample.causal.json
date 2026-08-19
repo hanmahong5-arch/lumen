@@ -1,0 +1,98 @@
+[
+  {
+    "event_id": 1,
+    "record_type": "AgentStarted",
+    "timestamp_ns": 1755500000000000000,
+    "caused_by": null,
+    "correlation_key": "task-1041",
+    "summary": "deploy-reconciler started (task 1041)"
+  },
+  {
+    "event_id": 2,
+    "record_type": "LlmCall",
+    "timestamp_ns": 1755500000000000000,
+    "caused_by": 1,
+    "correlation_key": "task-1041",
+    "summary": "plan with acme-small-v2"
+  },
+  {
+    "event_id": 3,
+    "record_type": "ToolCall",
+    "timestamp_ns": 1755500000940000000,
+    "caused_by": 2,
+    "correlation_key": "task-1041",
+    "summary": "read_manifest deploy/prod/manifest.yaml"
+  },
+  {
+    "event_id": 4,
+    "record_type": "CheckpointWritten",
+    "timestamp_ns": 1755500001250000000,
+    "caused_by": 3,
+    "correlation_key": "task-1041",
+    "summary": "checkpoint @ iteration 1"
+  },
+  {
+    "event_id": 5,
+    "record_type": "LlmCall",
+    "timestamp_ns": 1755500001254000000,
+    "caused_by": 4,
+    "correlation_key": "task-1041",
+    "summary": "diff reasoning with acme-large-v2 (95% of run cost)"
+  },
+  {
+    "event_id": 6,
+    "record_type": "PolicyDenied",
+    "timestamp_ns": 1755500013054000000,
+    "caused_by": 5,
+    "correlation_key": "task-1041",
+    "summary": "apply_patch denied: prod write needs a change ticket"
+  },
+  {
+    "event_id": 7,
+    "record_type": "AgentCrashed",
+    "timestamp_ns": 1755500013076000000,
+    "caused_by": 6,
+    "correlation_key": "task-1041",
+    "summary": "worker terminated (OOM)"
+  },
+  {
+    "event_id": 8,
+    "record_type": "AgentResumed",
+    "timestamp_ns": 1755500180000000000,
+    "caused_by": 7,
+    "correlation_key": "task-1041",
+    "summary": "resumed from lumen-sample-run-a at iteration 1"
+  },
+  {
+    "event_id": 9,
+    "record_type": "LlmCall",
+    "timestamp_ns": 1755500180006000000,
+    "caused_by": 8,
+    "correlation_key": "task-1041",
+    "summary": "replan from checkpoint (no re-run of the expensive diff)"
+  },
+  {
+    "event_id": 10,
+    "record_type": "ToolCall",
+    "timestamp_ns": 1755500181126000000,
+    "caused_by": 9,
+    "correlation_key": "task-1041",
+    "summary": "open_change_ticket -> CHG-4471"
+  },
+  {
+    "event_id": 11,
+    "record_type": "ToolCall",
+    "timestamp_ns": 1755500181606000000,
+    "caused_by": 10,
+    "correlation_key": "task-1041",
+    "summary": "apply_patch succeeded under CHG-4471"
+  },
+  {
+    "event_id": 12,
+    "record_type": "AgentCompleted",
+    "timestamp_ns": 1755500183076000000,
+    "caused_by": 11,
+    "correlation_key": "task-1041",
+    "summary": "run completed"
+  }
+]

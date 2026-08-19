@@ -87,8 +87,9 @@ for step in trace.steps:
 ## CLI
 
 ```bash
-lumen demo                           # One command → real run → opens its lifecycle .html
-lumen demo --kova-url http://localhost:3010   # …against a Kova you already run
+lumen demo                           # One command → lifecycle .html (sample run; no backend needed)
+lumen demo --kova-url http://localhost:3010   # …a real run against a Kova you already have
+lumen demo --live                    # Require a real run; fail instead of showing the sample
 lumen replay <trace-id>              # Replay an agent run (zero cost)
 lumen replay <id> --from-step 7      # Replay from a specific step
 lumen cost --last 24h                # Cost report (flags per-run cost outliers)
@@ -107,10 +108,25 @@ lumen export <run> --trace-dir ./traces              # One run → self-containe
 lumen export <run> --kova-url http://localhost:3010  # …fetch that run live first, then export
 ```
 
-**First look?** Just `lumen demo`. It spins up an ephemeral Kova, runs one real agent, and opens the
-lifecycle `.html` — no setup, no pipeline to learn. (Needs `KOVA_LLM_API_KEY`; the ephemeral path also
-needs a `kova-rest` binary on `PATH`/`KOVA_REST_BIN`, or point `--kova-url` at a Kova you already run.)
-The `pull`/`traces`/`cost`/`replay`/`export` verbs below are the power-user pipeline for after that.
+**First look?** Just `lumen demo`. From a clean `git clone`, with nothing else installed, it writes a
+self-contained lifecycle `.html` and opens it. No backend, no API key, no account, no network.
+
+What it shows is a checked-in **sample** run — labelled as such, and deliberately not a happy path:
+
+- a run whose cost is **95% one step** (per-step attribution; splitting a run's cost evenly across
+  steps would have blamed the wrong nine),
+- a tool call **refused by policy** — rendered distinctly from a failure, because they are different
+  problems with different fixes,
+- a **crash**, then a resume from the checkpoint that does *not* redo the expensive step — stitched
+  into one story instead of two unrelated runs.
+
+The sample's trace files stay on disk, so the rest of the CLI works on them verbatim —
+`lumen traces`, `lumen cost`, `lumen replay <id>` all read the same data you just looked at. That is
+the whole pipeline, learnable in one command, before you point anything at your own agents.
+
+With a Kova reachable, `lumen demo` instead runs a **real** `reconcile` agent and exports that
+(`--kova-url`, or an ephemeral `kova-rest` on `PATH`/`KOVA_REST_BIN` plus `KOVA_LLM_API_KEY`).
+`--sample` pins the offline path; `--live` refuses to fall back to it.
 
 ## Lifecycle view & export
 

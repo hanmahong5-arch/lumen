@@ -6,6 +6,7 @@ mod kova;
 mod lifecycle_load;
 mod netdata;
 mod pull;
+mod sample;
 mod tour;
 
 use clap::{Parser, Subcommand};
@@ -161,15 +162,19 @@ enum Commands {
         #[arg(long)]
         yes: bool,
     },
-    /// One command, one picture — run a canned scenario and open its lifecycle.
+    /// One command, one picture — export a lifecycle and open it.
     ///
-    /// The zero-to-visual path for evaluating Kova: spins up an ephemeral
-    /// `kova-rest` (or uses `--kova-url`), runs one real `reconcile` agent, and
-    /// opens the self-contained lifecycle `.html`. The power-user pipeline
-    /// (`pull` / `traces` / `cost` / `replay` / `export`) stays available, but a
-    /// first look needs none of it. Requires `KOVA_LLM_API_KEY` (the agent loop
-    /// is LLM-driven); for the ephemeral path it also locates a `kova-rest`
-    /// binary via `--kova-bin`, `KOVA_REST_BIN`, `PATH`, or the dev tree.
+    /// Works with nothing installed: with no Kova reachable, `demo` exports a
+    /// checked-in **sample** run — a crash-and-resume chain where one step is
+    /// 95% of the cost and one tool call is refused by policy. That is the
+    /// whole point of the tool, rendered offline, in one command.
+    ///
+    /// With a Kova available it instead runs a real `reconcile` agent: pass
+    /// `--kova-url`, or let it spawn an ephemeral `kova-rest` located via
+    /// `--kova-bin` / `KOVA_REST_BIN` / `PATH` / the dev tree (that path also
+    /// needs `KOVA_LLM_API_KEY`, since the agent loop is LLM-driven).
+    ///
+    /// `--sample` forces the offline path; `--live` refuses to fall back.
     Demo {
         /// Output HTML file (default `kova-demo-lifecycle.html`).
         #[arg(short, long)]
@@ -189,6 +194,12 @@ enum Commands {
         /// Don't open the result in a browser.
         #[arg(long)]
         no_open: bool,
+        /// Always use the checked-in sample run; never touch a Kova.
+        #[arg(long, conflicts_with = "live")]
+        sample: bool,
+        /// Require a real Kova run; fail instead of falling back to the sample.
+        #[arg(long)]
+        live: bool,
     },
     /// Assemble a narrated index over per-capability lifecycle exports.
     ///
@@ -275,6 +286,8 @@ fn main() -> std::process::ExitCode {
             api_key,
             kova_bin,
             no_open,
+            sample,
+            live,
         } => {
             return cmd_demo(
                 output.as_deref(),
@@ -282,6 +295,8 @@ fn main() -> std::process::ExitCode {
                 api_key,
                 kova_bin.as_deref(),
                 no_open,
+                sample,
+                live,
             );
         }
         Commands::Tour { entry, output } => return cmd_tour(&entry, output.as_deref()),
@@ -523,19 +538,82 @@ fn finish_export(
     std::process::ExitCode::SUCCESS
 }
 
-/// `lumen demo` — collapse the whole pipeline into one command. Gets a Kova
-/// (ephemeral spawn, or `--kova-url`), runs one canned `reconcile` agent, then
-/// fetches + renders its lifecycle into a self-contained `.html`.
+/// Materialize the checked-in sample chain into `dir` and export it.
+///
+/// The offline half of `lumen demo`. Uses the same `finish_export` the live
+/// path uses, so what a first-time reader sees is the real renderer, not a
+/// screenshot.
+fn run_sample_demo(
+    dir: &std::path::Path,
+    output: Option<&str>,
+    no_open: bool,
+) -> std::process::ExitCode {
+    let run_id = match sample::materialize(dir) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("\x1b[31mError: {e}\x1b[0m");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+
+    println!(
+        "  \x1b[32m✓ sample run ready\x1b[0m → {run_id} (resumed from {})",
+        sample::PARENT_RUN_ID
+    );
+    println!("  \x1b[2msample data, not a live run — the same files the real path writes\x1b[0m");
+    println!();
+    println!(
+        "  The trace files stay in {}; the rest of the CLI reads them:",
+        dir.display()
+    );
+    println!("    lumen traces --trace-dir {}", dir.display());
+    println!("    lumen cost   --trace-dir {}", dir.display());
+    println!("    lumen replay {run_id} --trace-dir {}", dir.display());
+    println!("  Your own agents: `lumen pull --kova-url <url>`, then the same commands.");
+    println!();
+
+    finish_export(dir, run_id, "lumen-demo-lifecycle.html", output, no_open)
+}
+
+/// `lumen demo` — collapse the whole pipeline into one command.
+///
+/// Two paths, same renderer. With a Kova reachable it runs one real
+/// `reconcile` agent and exports that run. With nothing installed it exports
+/// the checked-in sample chain instead, so a fresh `git clone` still gets a
+/// picture on the first command. `--sample` / `--live` pin the choice.
 fn cmd_demo(
     output: Option<&str>,
     kova_url: Option<String>,
     api_key: Option<String>,
     kova_bin: Option<&str>,
     no_open: bool,
+    sample: bool,
+    live: bool,
 ) -> std::process::ExitCode {
     // A throwaway trace dir for the fetched run + sidecars (cleaned at the end).
     let trace_dir = std::env::temp_dir().join(format!("lumen-demo-traces-{}", std::process::id()));
     let dir = trace_dir.as_path();
+
+    if sample {
+        return run_sample_demo(dir, output, no_open);
+    }
+
+    // Nothing to talk to and no way to start one: show the sample rather than
+    // dead-ending. `--live` opts out of that and keeps the hard error.
+    if kova_url.is_none() && !live {
+        let missing_bin = demo::locate_kova_rest(kova_bin).is_none();
+        let missing_key = demo::LlmEnv::from_env().is_none();
+        if missing_bin || missing_key {
+            let why = if missing_bin {
+                "no `kova-rest` binary found"
+            } else {
+                "KOVA_LLM_API_KEY is not set"
+            };
+            println!("\x1b[36m▶ demo — {why}; showing the checked-in sample run instead.\x1b[0m");
+            println!("  (a real run: `lumen demo --kova-url <url>`; to fail instead: `--live`)");
+            return run_sample_demo(dir, output, no_open);
+        }
+    }
 
     // Resolve the target Kova: an explicit URL wins; otherwise spawn one. The
     // `_spawned` guard, if present, tears the ephemeral instance down on return.
