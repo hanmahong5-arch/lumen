@@ -1,261 +1,159 @@
+[中文](README.zh-CN.md) | English
+
 # Lumen
 
-> Illuminate your AI agents. Never lose a run. Never burn tokens blindly.
+Observability and crash-recovery for AI agents: replay any run, track every LLM dollar, resume after a crash.
 
-**Developer tool for AI agent reliability and observability.** For anyone building
-agents with LangGraph / CrewAI / AutoGen / custom Python who needs: visibility
-(where money goes), debugging (what happened at step 7/12), reliability (resume
-after crash without re-running), budget control (stop before credits burn).
+Lumen is a two-part developer tool — a Python SDK you `instrument()` once, and a Rust CLI/dashboard
+you point at the resulting trace files — for anyone building agents with LangGraph, CrewAI, AutoGen,
+or plain Python who needs to know where the money went, what happened at a given step, and how to
+resume a run without re-executing it from scratch. It is an early-stage, alpha project
+(`Development Status :: 3 - Alpha`, `lumen-sdk/pyproject.toml:22`): the core tracing, cost, and replay
+paths are implemented and tested, LangGraph is the one integration with a dedicated tracer/checkpointer,
+and CrewAI/AutoGen support is not built yet. Lumen is not published to any package registry — building
+from source is the only supported install path today.
 
-## Install
+## Core capabilities
 
-**From source only.** Lumen is not published to any package registry yet: there is
-no `lumen-ai` package on PyPI, and the `lumen-cli` crate on crates.io is an
-**unrelated third-party project** — do not `cargo install lumen-cli`.
+- **One-line auto-instrumentation** — `instrument()` patches the OpenAI and Anthropic SDK clients and
+  LangGraph so every call is traced without touching call sites (`lumen-sdk/lumen/instrument.py`).
+- **Deterministic replay** — replay any past run from its trace JSON with zero LLM calls, optionally
+  starting mid-run with `--from-step` (`lumen-core/src/replay.rs`, `lumen-sdk/lumen/replay.py`).
+- **Cost tracking and pricing** — per-agent, per-model USD breakdown from token counts, covering 30+
+  models, with per-run cost-outlier flagging (`lumen-core/src/cost.rs`, `lumen-core/src/pricing.rs`,
+  `lumen-sdk/lumen/cost.py`, `lumen-sdk/lumen/pricing.py`).
+- **Crash-safe checkpointing** — a `LumenCheckpointer` for LangGraph that persists to disk with no
+  external services, so a crashed process resumes from its last checkpoint
+  (`lumen-sdk/lumen/integrations/langgraph.py`).
+- **Budget guard and anomaly detection** — kill-on-exceeded budget tracking and cost/metric anomaly
+  detection with a configurable multiplier (`lumen-sdk/lumen/_budget.py`, `lumen-sdk/lumen/_anomaly.py`).
+- **Web dashboard** — a trace timeline plus, when pointed at a live Kova + Netdata, a live Metrics tab
+  (Prometheus metrics with per-metric ML anomaly ribbons) and a Terminal tab (whitelisted Kova control
+  console, not a real shell) (`lumen-cli/src/dashboard.rs`, `lumen-cli/src/netdata.rs`, `lumen-cli/src/kova.rs`).
+
+## Quick start
 
 ```bash
 git clone https://github.com/hanmahong5-arch/lumen.git
 cd lumen
 
-# CLI (Rust — stable toolchain with Edition 2024 support; verified with 1.96.0)
+# CLI (Rust, stable toolchain with Edition 2024 support; build verified with 1.96.0)
 cargo build --release
 ./target/release/lumen --version   # -> lumen 0.1.0
 
-# Python SDK (Python 3.10+, editable install from the repo)
+# Python SDK (Python 3.10+, editable install)
 pip install -e ./lumen-sdk                 # SDK core
 pip install -e "./lumen-sdk[langgraph]"    # + LangGraph integration
 pip install -e "./lumen-sdk[all]"          # + all integrations
+
+# Tests
+cargo test -p lumen-core -p lumen-cli
+cd lumen-sdk && python -m pytest
 ```
 
-Step-by-step build instructions and troubleshooting: [docs/INSTALL.md](docs/INSTALL.md).
-
-## Quick Start — one-line auto-instrumentation
+Full build/troubleshooting steps: [docs/INSTALL.md](docs/INSTALL.md).
 
 ```python
-from lumen import instrument, trace, traced_fn
+from lumen import instrument, trace
 
 instrument()  # auto-detect OpenAI / Anthropic / LangGraph; all later calls recorded
 
-# Group multiple calls into one trace:
 with trace("research-task") as t:
-    r1 = client.chat.completions.create(model="gpt-4o", messages=[...])
-    r2 = client.chat.completions.create(model="gpt-4o", messages=[...])
+    r1 = client.chat.completions.create(model="your-model", messages=[...])
     print(f"Trace: {t.trace_id}, cost: ${t.total_cost_usd:.4f}")
-
-# Decorator form (also: async with atrace(...)):
-@traced_fn("summarizer")
-def summarize(text):
-    return client.chat.completions.create(...)
 ```
 
-## Quick Start — LangGraph + Lumen
-
-```python
-from lumen.integrations.langgraph import LumenCheckpointer, LumenTracer
-from langgraph.prebuilt import create_react_agent
-
-checkpointer = LumenCheckpointer(storage_dir="./checkpoints")  # crash-safe, zero ext services
-tracer = LumenTracer(trace_dir="./traces")                     # replay + cost tracking
-
-graph = create_react_agent(model, tools, checkpointer=checkpointer)
-result = graph.invoke(
-    {"messages": [HumanMessage("Research quantum computing")]},
-    config={"callbacks": [tracer]},
-)
-# then: lumen traces / cost / replay --trace-dir ./traces
-```
-
-## What it does
-
-- **Replay** (`lumen replay <id>`) — deterministically replay any agent run from trace JSON, zero LLM cost. Supports `--from-step N`.
-- **Cost tracking** (`lumen cost`) — per-agent, per-model dollar breakdown; flags per-run **cost outliers** (> 2× run mean). For metric-level **ML anomaly** detection, see Metrics & ML anomaly below.
-- **Crash recovery** — process dies, agent resumes from last checkpoint. `LumenCheckpointer` does file-backed 3μs checkpoint writes (vs SQLite ~100μs, PostgreSQL ~1ms), zero external services.
-
-Python API:
-
-```python
-from lumen import CostTracker, ReplayEngine
-
-report = CostTracker(trace_dir="./traces").report(last="24h")
-print(f"Total: ${report.total_usd:.2f} across {report.total_runs} runs")
-
-trace = ReplayEngine(trace_dir="./traces").replay("abc123")
-for step in trace.steps:
-    print(f"Step {step.step}: {step.tool_name or step.content}")
-```
-
-## CLI
-
-```bash
-lumen demo                           # One command → lifecycle .html (sample run; no backend needed)
-lumen demo --kova-url http://localhost:3010   # …a real run against a Kova you already have
-lumen demo --live                    # Require a real run; fail instead of showing the sample
-lumen replay <trace-id>              # Replay an agent run (zero cost)
-lumen replay <id> --from-step 7      # Replay from a specific step
-lumen cost --last 24h                # Cost report (flags per-run cost outliers)
-lumen cost --last 7d --format json   # JSON output
-lumen traces                         # List all agent runs
-lumen traces --trace-dir ./my-traces # Custom trace directory
-lumen dashboard                      # Web UI: trace timeline + Metrics + Terminal tabs
-lumen dashboard --netdata-url http://localhost:19999   # + live metrics/ML anomaly
-lumen dashboard --kova-url http://localhost:3010 --api-key sk-kova-…  # + Terminal tab
-lumen metrics --last 10m             # Headless kova metrics + ML anomaly snapshot
-lumen kova "agents"                  # Headless one-shot of a kova control verb
-lumen kova "agent foo delete" --yes  # …destructive verbs need --yes
-lumen pull --kova-url http://localhost:3010          # Pull trace JSON from a live Kova
-lumen pull --deep --kova-url http://localhost:3010   # …+ causal/workflow lifecycle sidecars
-lumen export <run> --trace-dir ./traces              # One run → self-contained offline lifecycle .html
-lumen export <run> --kova-url http://localhost:3010  # …fetch that run live first, then export
-```
-
-**First look?** Just `lumen demo`. From a clean `git clone`, with nothing else installed, it writes a
-self-contained lifecycle `.html` and opens it. No backend, no API key, no account, no network.
-
-What it shows is a checked-in **sample** run — labelled as such, and deliberately not a happy path:
-
-- a run whose cost is **95% one step** (per-step attribution; splitting a run's cost evenly across
-  steps would have blamed the wrong nine),
-- a tool call **refused by policy** — rendered distinctly from a failure, because they are different
-  problems with different fixes,
-- a **crash**, then a resume from the checkpoint that does *not* redo the expensive step — stitched
-  into one story instead of two unrelated runs.
-
-The sample's trace files stay on disk, so the rest of the CLI works on them verbatim —
-`lumen traces`, `lumen cost`, `lumen replay <id>` all read the same data you just looked at. That is
-the whole pipeline, learnable in one command, before you point anything at your own agents.
-
-With a Kova reachable, `lumen demo` instead runs a **real** `reconcile` agent and exports that
-(`--kova-url`, or an ephemeral `kova-rest` on `PATH`/`KOVA_REST_BIN` plus `KOVA_LLM_API_KEY`).
-`--sample` pins the offline path; `--live` refuses to fall back to it.
-
-## Lifecycle view & export
-
-The **Lifecycle tab** (and `lumen export`) tell an agent run's *whole story* in one view: a
-lane-grouped **swimlane** (timing/tokens/cost per step), a real **causal DAG** (directive→result
-edges from `format=causal`), **crash→recovery stitching** across the trace chain, **swarm
-delegations**, and a **provenance badge**. `lumen export <run>` writes a single **self-contained
-`.html`** (no server, no CDN) you can archive or share — the same render code the live dashboard uses.
-Run `lumen pull --deep` first (or pass `--kova-url`) so the causal/workflow sidecars are present.
-
-## Metrics & ML anomaly (Netdata)
-
-Lumen is the **single observability surface** for Kova: traces + cost (read from trace JSON) **and**
-live metrics + per-metric **ML anomaly detection** (consumed from [Netdata](https://netdata.cloud)).
-The dashboard's **Metrics tab** and `lumen metrics` render kova's Prometheus metrics — agent-dispatch
-queue depth, WAL bytes, throughput, completion tokens, cost — each with an **ML anomaly-rate ribbon**,
-plus a fleet "ML anomaly rate" KPI and active Netdata health alarms.
-
-```bash
-export LUMEN_NETDATA_URL=http://localhost:19999     # or --netdata-url; over Tailscale: http://100.122.83.20:19999
-lumen dashboard                                     # Metrics tab now live
-lumen metrics --last 1h --format json               # headless snapshot for stress campaigns
-```
-
-**Single-origin proxy (no CORS).** The browser only talks to Lumen's loopback `:9700`; Lumen makes the
-Netdata calls server-side. It works whether Lumen is co-located with Netdata or one Tailscale hop away.
-Consuming Netdata's HTTP API is a REST call — **no GPLv3 netdata code is linked into Lumen**, and
-`lumen-core` stays HTTP-free.
-
-**SSRF discipline** (the proxy is browser-reachable): one fixed base URL; only `/api/v1/data` +
-`/api/v1/alarms`; a chart whitelist (`prometheus.kova_*` / `anomaly_detection.*`); relative-only
-`after`/`before` windows; fixed `group=average`; `points ≤ 1000`; no redirects; a ~2 MiB response cap;
-and no header passthrough in either direction.
-
-**Two distinct anomaly signals (by design).** Netdata ML anomaly is *per-metric, per-timestep* (a
-metric sample deviates from its learned history) — the headline signal on the Metrics tab. It has no
-`trace_id` dimension, so it can't be pinned to one run. Lumen's `cost` command/Overview keeps a
-separate *per-run, offline* **cost outlier** flag (a run costing > 2× the mean of runs on disk) — cheap
-and works with no Netdata, but no longer the headline anomaly story. A per-run **deep-link** bridges
-them: from a trace, "view metrics for this run's window" opens the Metrics tab scoped to that run's
-`[started_at_ms, completed_at_ms]`, so you see kova's metrics + anomaly ribbon *as they were while the
-run executed*.
-
-> Netdata scrapes kova-rest's Prometheus `/metrics` into `prometheus.kova_*` charts (one dimension per
-> tester job `kova-rest-<tester>`) — **your services are unchanged**. See the obs-pack contract
-> (`2b-svc-kova/deploy/obs-pack/`, Netdata on `:19999`) and `2b-svc-kova/doc/coord/contracts.md`.
->
-> Known gap: the inline dashboard has no CSP (loopback-only dev tool; the page is all-inline, so a CSP
-> would need `'unsafe-inline'` and add little). All Netdata-derived strings are HTML/JS-escaped.
-
-## Terminal — kova control console
-
-The dashboard's **Terminal tab** (and the headless `lumen kova "<command>"`) drive a running Kova
-without SSH-ing to it: inspect agents / workflows / traces and run common control verbs from a
-Ghostty-styled console in the browser.
-
-```bash
-export LUMEN_KOVA_URL=http://localhost:3010                 # or --kova-url; over Tailscale: http://100.122.83.20:3010
-export LUMEN_KOVA_API_KEY=sk-kova-…                         # or --api-key; held server-side, never sent to the browser
-lumen dashboard                                             # Terminal tab now live
-lumen kova "agents"                                         # headless one-shot (no browser)
-```
-
-**Honest scope — it is a kova-REST command console, not Ghostty/a PTY.** Kova is API-first: every
-control verb is a discrete REST call, so the "terminal" is a **REST interpreter**, not a shell. A typed
-line is parsed into one **whitelisted** command that maps to exactly one `(method, /api/v1/… path,
-body)`; there is no raw shell, no `std::process` exec, and no arbitrary path/method/host. (A true PTY
-shell into Kova would be arbitrary RCE — out of scope; Forge is the home for that if ever wanted.)
-
-**Verbs:**
-- **Read:** `status` · `agents` · `agent <id> [traces|history|status]` · `workflows` · `workflow <id>` ·
-  `awaiting` (workflows awaiting input) · `approvals` (kova's pending-HITL-approval projection) ·
-  `schedules` · `schedule <id>` · `tools` · `queues` · `traces` · `trace <id>` · `llm` · `help`/`clear` (local).
-- **Safe mutations:** `agent <id> run <msg…>` · `agent <id> stop|pause|resume|restart` ·
-  `agent <id> approve|deny [comment…]` · `workflow <id> cancel [reason…]` · `workflow <id> resume <input…>` ·
-  `schedule <id> pause|resume`.
-- **Destructive (confirm required):** `agent <id> reset [reason…]` · `agent <id> terminate [reason…]` ·
-  `agent <id> delete` · `schedule <id> delete` · `trace <id> delete`.
-
-**Safety model:**
-- The dashboard stays **loopback-only** (`127.0.0.1`); the kova API key is held **server-side** (reuses
-  `resolve_api_key`) and never reaches the browser — the page only ever POSTs command *text* to Lumen.
-- **Whitelist chokepoint:** the HTTP seam is only ever called with an interpreter-built `(method, path)`;
-  ids are percent-encoded so no extra path segment / query / `..` traversal is reachable. One fixed
-  `base_url`, `redirects(0)`, ~2 MiB bounded read.
-- **Destructive confirm** is enforced **server-side** (not bypassable from the UI): a destructive command
-  is never sent until a second confirmed request arrives (`⏎`/`y` in the UI, `--yes` for `lumen kova`).
-- **CSRF-guarded:** the server rejects any state-changing request (`POST`) whose `Origin` isn't the
-  dashboard's own loopback origin, so a page the operator happens to visit can't drive kova through the
-  console (the key is server-side, and a cross-site `POST` would otherwise borrow it). Non-browser
-  clients (the `lumen` CLI, curl) send no `Origin` and are unaffected.
-- Kova independently enforces **RBAC + audit** server-side, so the key's role bounds reach; all
-  kova-derived output is inert in the DOM (`textContent`). Read verbs need no LLM; agent *runs* need a
-  working LLM key on Kova.
-- Known gap (same as the Metrics tab): no CSP — loopback-only, all-inline page. A `--console-token` gate
-  on the dashboard itself (for shared / multi-user hosts) is noted future work.
-
-See `2b-svc-kova/doc/coord/contracts.md` (Lumen → kova-rest control-plane) for the consumed endpoint set.
-
-## Pricing estimation
-
-Estimates costs from token usage even when the provider doesn't report cost directly.
-Supports 30+ models incl. Claude, GPT-4o, Gemini, Llama, Mistral, DeepSeek.
-
-## v0.2 Status
-
-Shipped ✅: `instrument()` one-line auto-detection · OpenAI + Anthropic SDK auto-instrumentation ·
-LangGraph CheckpointSaver + Tracer · `with trace(...)` / `async with atrace(...)` / `@traced_fn` ·
-cost tracking (Python + CLI) · replay (Python + CLI) · pricing estimation (30+ models) ·
-budget tracker with kill-on-exceeded · cost anomaly detection · trace redaction (PII / custom
-patterns) · trace diff & compare · TraceQuery (filter / aggregate) · runtime metrics
-(Prometheus-style) · hierarchical config (`lumen.toml` / env / builder) · web dashboard
-(trace timeline + Netdata Metrics tab + kova-control Terminal tab).
-
-⏳ v0.3: `lumen.Agent.run()` direct execution · web dashboard (`lumen up`) · `pytest-lumen` plugin.
-⏳ Planned: CrewAI / AutoGen integration.
+No LangGraph or Kova at hand? `lumen demo` spins up an ephemeral `kova-rest`, runs one real agent, and
+opens the resulting lifecycle `.html` — needs `KOVA_LLM_API_KEY` and a `kova-rest` binary on `PATH` (or
+point `--kova-url` at a Kova you already run).
 
 ## Architecture
 
-Your Python code → **Lumen SDK** (`lumen-ai`: cost tracking, anomaly detection, replay engine;
-LangGraph CheckpointSaver + Tracer callback) → **Lumen Core** (Rust, embedded: replay engine,
-cost aggregation, pricing tables) → your LLM provider (OpenAI, Anthropic, etc.).
+```
+lumen-core/   Rust engine (embedded in the CLI, no HTTP): trace types, replay, cost
+              aggregation, pricing tables, lifecycle assembly for the dashboard/export.
+              Vendors kova-types' trace format locally so the crate builds standalone
+              (lumen-core/Cargo.toml:9-11).
+lumen-cli/    Rust CLI + web dashboard: subcommands (main.rs), dashboard server
+              (dashboard.rs/.html), Kova control-console interpreter (kova.rs),
+              Netdata metrics proxy (netdata.rs), trace puller (pull.rs), demo
+              orchestration (demo.rs).
+lumen-sdk/    Python package `lumen-ai`: instrument() auto-instrumentation, trace
+              writers/readers, cost/pricing, budget + anomaly detection, redaction,
+              hierarchical config (config.py), and integrations/ (OpenAI, Anthropic,
+              LangGraph tracer + checkpointer).
+```
 
-## Release tags
+Data flow: your Python code → **Lumen SDK** writes trace JSON to disk (or an OTLP-style export) →
+**Lumen Core** (embedded in the CLI) reads that JSON for replay/cost/lifecycle rendering → your LLM
+provider is only ever called by your own code, never by Lumen.
 
-A plain `vX.Y.Z` tag (e.g. `v0.3.0`) fires both `publish-lumen-sdk.yaml` and
-`release-lumen-cli.yaml` in one push. The per-artifact prefixes `lumen-sdk-vX.Y.Z`
-and `lumen-cli-vX.Y.Z` still work if you need to ship one side only.
+## Configuration
 
-## License
+SDK config resolves in order: hardcoded defaults → `~/.lumen/config.toml` → `./lumen.toml` (walked up
+from cwd) → `LUMEN_*` environment variables → explicit builder overrides (`lumen-sdk/lumen/config.py:1-9`).
 
-MIT
+| Variable | Default | Description |
+|---|---|---|
+| `LUMEN_ENABLED` | `true` | Master switch for trace capture (`config.py:351`) |
+| `LUMEN_TRACE_DIR` | `./traces` | Where trace JSON is written/read (`config.py:352`) |
+| `LUMEN_SAMPLING_RATE` | `1.0` | Fraction of calls traced (`config.py:353`) |
+| `LUMEN_BUDGET_USD` | `0.0` | Budget ceiling; `0` = unlimited (`config.py:357`) |
+| `LUMEN_KILL_ON_BUDGET` | `false` | Raise/kill when the budget is exceeded (`config.py:358`) |
+| `LUMEN_ANOMALY_MULTIPLIER` | `2.0` | Cost-outlier threshold: > N × the run mean (`config.py:359`) |
+| `LUMEN_REDACTION_ENABLED` | `false` | Redact matched patterns before writing traces (`config.py:355`) |
+| `LUMEN_OTLP_ENABLED` | `false` | Export traces to an OTLP endpoint (`config.py:368`) |
+| `LUMEN_NETDATA_URL` | — | Dashboard Metrics tab source, e.g. `http://localhost:19999` (`main.rs:333`) |
+| `LUMEN_KOVA_URL` | — | Kova base URL for `pull`/`export`/`kova`/Terminal tab (`main.rs:350`) |
+| `LUMEN_KOVA_API_KEY` / `KOVA_API_KEY` | — | Kova `X-API-Key`, held server-side, never sent to the browser (`main.rs:341-342`) |
+| `KOVA_LLM_API_KEY` | — | Required by `lumen demo`'s agent loop (`demo.rs:109`) |
+| `KOVA_REST_BIN` | — | Path to the `kova-rest` binary for `lumen demo`'s ephemeral path (`demo.rs:143`) |
+
+## CLI overview
+
+```
+lumen replay <trace-id> [--from-step N]                 # replay a run, zero LLM cost
+lumen cost --last 24h [--format json]                    # cost report + per-run outliers
+lumen traces [--trace-dir ./traces]                       # list agent runs
+lumen dashboard [--netdata-url …] [--kova-url … --api-key …]  # web UI
+lumen metrics --last 10m [--format json]                  # headless Netdata snapshot
+lumen pull --kova-url <url> [--deep]                       # fetch traces from a live Kova
+lumen export <run> [--trace-dir …] [--kova-url …]          # one run -> self-contained .html
+lumen kova "<verb>" [--kova-url …] [--yes]                 # one-shot Kova control command
+lumen demo [--kova-url …] [--kova-bin …]                   # zero-setup: run + visualize
+lumen tour                                                  # assemble a multi-run index.html
+```
+
+`lumen kova`/the dashboard's Terminal tab speak a whitelisted verb set against Kova's REST API — read
+verbs (`status`, `agents`, `workflows`, `schedules`, `tools`, `queues`, `traces`, `llm`, …), safe
+mutations (`agent <id> run|stop|pause|resume|restart|approve|deny`, `workflow <id> cancel|resume`,
+`schedule <id> pause|resume`), and destructive verbs that require `--yes` or a second confirmation
+(`agent <id> reset|terminate|delete`, `schedule <id> delete`, `trace <id> delete`) — see
+`lumen-cli/src/kova.rs`. It is a REST interpreter, not a shell: no raw `std::process` exec and no
+arbitrary path/method/host.
+
+## Development
+
+- Rust workspace lints deny `unwrap()`/`expect()`/`panic!()` and unsafe-in-unsafe-fn
+  (`Cargo.toml:11-17`); CI (`.github/workflows/release-lumen-cli.yaml`) gates every tagged build on
+  `cargo test`, `cargo clippy -- -D warnings`, and `cargo fmt --check`.
+- `lumen-core`'s trace types are a local vendor copy of `kova-types` (kept in sync by hand, see the
+  comment in `lumen-core/Cargo.toml`) so this repo builds standalone with no private sibling dependency.
+- Release tags: a plain `vX.Y.Z` push fires both `publish-lumen-sdk.yaml` and `release-lumen-cli.yaml`;
+  per-artifact `lumen-sdk-vX.Y.Z` / `lumen-cli-vX.Y.Z` tags ship one side only.
+- Repo-local development conventions (brand boundary, directory layout, command cheatsheet) live in this
+  repo's own dev-convention doc, which is intentionally excluded from the public tree (see `.gitignore`).
+
+## Related projects
+
+Lumen is the open, independent-branded observability client for **Kova** (`2b-svc-kova`), a Lurus agent
+runtime — `lumen-cli` talks to Kova's REST API (`pull`, `export --kova-url`, `kova`, Terminal tab) and
+`lumen-core` vendors Kova's trace schema, but end users of Lumen never need to know Kova exists. The
+dashboard's lifecycle rendering (`lumen-cli/src/dashboard.rs`, `lumen-core/src/flow_types.rs`) shares its
+data model with **Forge** (`2b-bs-forge`), which embeds Lumen for its own lifecycle-export feature.
+
+## License and third-party notices
+
+MIT — see [LICENSE](LICENSE). Third-party Rust crate licenses for the compiled `lumen` binary are listed
+in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) (generated with `cargo about generate`); no upstream
+project is forked or vendored beyond the `kova-types` trace-schema copy noted above.
