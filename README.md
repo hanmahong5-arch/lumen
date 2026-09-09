@@ -13,6 +13,11 @@ paths are implemented and tested, LangGraph is the one integration with a dedica
 and CrewAI/AutoGen support is not built yet. Lumen is not published to any package registry — building
 from source is the only supported install path today.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.svg">
+  <img alt="Lumen's two-stage pipeline: your code calls the LLM provider directly, while the Python SDK writes trace JSON to disk for the Rust CLI/core to read and render as replay, cost, and dashboard views — Lumen itself never calls your LLM provider." src="docs/diagrams/architecture.svg">
+</picture>
+
 ## Core capabilities
 
 - **One-line auto-instrumentation** — `instrument()` patches the OpenAI and Anthropic SDK clients and

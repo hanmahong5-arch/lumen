@@ -11,6 +11,11 @@ CLI/仪表盘。目标用户是用 LangGraph、CrewAI、AutoGen 或纯 Python �
 已实现并有测试覆盖，LangGraph 是唯一有专用 tracer/checkpointer 的集成，CrewAI/AutoGen 尚未实现。Lumen
 还没有发布到任何包仓库 —— 目前唯一受支持的安装方式是从源码构建。
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.svg">
+  <img alt="图示 Lumen 的两段式架构：你的代码直接调用 LLM 供应商，同时 Python SDK 把 trace JSON 写入磁盘，供 Rust CLI/Core 读取并渲染成回放、成本与仪表盘视图——Lumen 自己从不调用你的 LLM 供应商。" src="docs/diagrams/architecture.svg">
+</picture>
+
 ## 核心能力
 
 - **一行自动埋点** —— `instrument()` 给 OpenAI、Anthropic SDK 客户端和 LangGraph 打补丁，调用点无需
