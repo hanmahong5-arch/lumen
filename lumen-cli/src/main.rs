@@ -987,7 +987,9 @@ fn cmd_traces(trace_dir: &str, limit: usize) {
         Ok(traces) => {
             if traces.is_empty() {
                 println!("No traces in `{trace_dir}`.");
-                println!("  next: `lumen demo` for a sample run, or `instrument()` your agent then retry.");
+                println!(
+                    "  next: `lumen demo` for a sample run, or `instrument()` your agent then retry."
+                );
                 return;
             }
             println!(
