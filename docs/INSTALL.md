@@ -35,7 +35,7 @@ under a minute.
 
 ```bash
 ./target/release/lumen --version
-# lumen 0.1.0
+# lumen 0.3.0
 
 ./target/release/lumen --help
 # lists: replay, cost, traces, dashboard, metrics, pull, export, kova, demo, tour
@@ -60,7 +60,10 @@ python -c "import lumen; print(lumen.__version__)"
 
 ```bash
 cargo test -p lumen-core -p lumen-cli
-# all suites pass; e.g. lumen-core: "test result: ok. 14 passed; 0 failed"
+# all suites pass (see CI: .github/workflows/ci.yaml)
+
+cd lumen-sdk && python -m pytest
+# SDK suite passes
 ```
 
 ## Troubleshooting

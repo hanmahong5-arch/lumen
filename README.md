@@ -44,7 +44,7 @@ cd lumen
 
 # CLI (Rust, stable toolchain with Edition 2024 support; build verified with 1.96.0)
 cargo build --release
-./target/release/lumen --version   # -> lumen 0.1.0
+./target/release/lumen --version   # -> lumen 0.3.0
 
 # Python SDK (Python 3.10+, editable install)
 pip install -e ./lumen-sdk                 # SDK core
@@ -89,7 +89,7 @@ lumen-sdk/    Python package `lumen-ai`: instrument() auto-instrumentation, trac
               LangGraph tracer + checkpointer).
 ```
 
-Data flow: your Python code → **Lumen SDK** writes trace JSON to disk (or an OTLP-style export) →
+Data flow: your Python code → **Lumen SDK** writes trace JSON to disk →
 **Lumen Core** (embedded in the CLI) reads that JSON for replay/cost/lifecycle rendering → your LLM
 provider is only ever called by your own code, never by Lumen.
 
@@ -107,7 +107,6 @@ from cwd) → `LUMEN_*` environment variables → explicit builder overrides (`l
 | `LUMEN_KILL_ON_BUDGET` | `false` | Raise/kill when the budget is exceeded (`config.py:358`) |
 | `LUMEN_ANOMALY_MULTIPLIER` | `2.0` | Cost-outlier threshold: > N × the run mean (`config.py:359`) |
 | `LUMEN_REDACTION_ENABLED` | `false` | Redact matched patterns before writing traces (`config.py:355`) |
-| `LUMEN_OTLP_ENABLED` | `false` | Export traces to an OTLP endpoint (`config.py:368`) |
 | `LUMEN_NETDATA_URL` | — | Dashboard Metrics tab source, e.g. `http://localhost:19999` (`main.rs:333`) |
 | `LUMEN_KOVA_URL` | — | Kova base URL for `pull`/`export`/`kova`/Terminal tab (`main.rs:350`) |
 | `LUMEN_KOVA_API_KEY` / `KOVA_API_KEY` | — | Kova `X-API-Key`, held server-side, never sent to the browser (`main.rs:341-342`) |

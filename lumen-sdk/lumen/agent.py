@@ -1,6 +1,7 @@
-"""High-level Agent API — coming in Lumen v0.2.
+"""Internal stubs — NOT part of the public ``lumen`` API.
 
-For v0.1, use the LangGraph integration for agent execution with tracing:
+``Agent.run()`` and ``@traced`` are unimplemented. Do not import these from
+``lumen``; use the LangGraph integration instead::
 
     from lumen.integrations.langgraph import LumenCheckpointer, LumenTracer
     from langgraph.prebuilt import create_react_agent
@@ -20,7 +21,7 @@ from typing import Any, Callable, Sequence
 
 @dataclass
 class AgentConfig:
-    """Configuration for a Lumen agent."""
+    """Configuration for a Lumen agent (stub; unused)."""
 
     model: str = "claude-sonnet-4-6"
     max_iterations: int = 20
@@ -31,7 +32,7 @@ class AgentConfig:
 
 @dataclass
 class AgentResult:
-    """Result of an agent run."""
+    """Result of an agent run (stub; unused)."""
 
     output: str
     trace_id: str
@@ -42,19 +43,7 @@ class AgentResult:
 
 
 class Agent:
-    """A durable, observable AI agent.
-
-    .. note::
-
-        ``Agent.run()`` is not yet implemented in Lumen v0.1.
-        Use the LangGraph integration instead::
-
-            from lumen.integrations.langgraph import LumenCheckpointer, LumenTracer
-            graph = create_react_agent(model, tools, checkpointer=LumenCheckpointer())
-            result = graph.invoke(input, config={"callbacks": [LumenTracer()]})
-
-        Direct ``Agent.run()`` with WAL-backed execution is planned for v0.2.
-    """
+    """Unimplemented high-level agent. Prefer LangGraph + LumenTracer."""
 
     def __init__(
         self,
@@ -74,22 +63,13 @@ class Agent:
         self._last_trace_id: str | None = None
 
     async def run(self, task: str) -> AgentResult:
-        """Run the agent on a task.
-
-        .. note::
-
-            Not yet implemented in v0.1. Use ``LumenTracer`` with LangGraph instead.
-
-        Raises:
-            NotImplementedError: Always. Direct agent execution coming in v0.2.
-        """
+        """Not implemented — raises ``NotImplementedError``."""
         raise NotImplementedError(
-            "Agent.run() is not yet implemented in Lumen v0.1. "
+            "Agent.run() is not implemented. "
             "Use the LangGraph integration instead:\n\n"
             "  from lumen.integrations.langgraph import LumenCheckpointer, LumenTracer\n"
             "  graph = create_react_agent(model, tools, checkpointer=LumenCheckpointer())\n"
-            "  result = graph.invoke(input, config={'callbacks': [LumenTracer()]})\n\n"
-            "Direct Agent.run() with WAL-backed execution is planned for v0.2."
+            "  result = graph.invoke(input, config={'callbacks': [LumenTracer()]})"
         )
 
     @property
@@ -99,19 +79,12 @@ class Agent:
 
 
 def traced(fn: Callable | None = None, *, trace_dir: str = "./traces"):
-    """Decorator that automatically traces an async function.
-
-    .. note::
-
-        Not yet implemented in v0.1. Use ``LumenTracer`` callback instead.
-    """
+    """Unimplemented decorator. Prefer ``traced_fn`` or ``LumenTracer``."""
 
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            # TODO v0.2: Start trace session, record inputs/outputs
-            result = await func(*args, **kwargs)
-            return result
+            return await func(*args, **kwargs)
 
         return wrapper
 

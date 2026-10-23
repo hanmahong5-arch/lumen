@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from lumen._errors import ConfigWarning
 from lumen.config import LumenConfig, RedactionConfig
 
 
@@ -116,15 +117,16 @@ class TestFromDict:
         assert cfg.monitoring.dashboard_host == "0.0.0.0"
 
     def test_export_otlp(self) -> None:
-        cfg = LumenConfig.from_dict({
-            "export": {
-                "otlp": {
-                    "enabled": True,
-                    "endpoint": "http://otel:4318",
-                    "headers": {"Authorization": "Bearer xxx"},
+        with pytest.warns(ConfigWarning, match="OTLP export is not implemented"):
+            cfg = LumenConfig.from_dict({
+                "export": {
+                    "otlp": {
+                        "enabled": True,
+                        "endpoint": "http://otel:4318",
+                        "headers": {"Authorization": "Bearer xxx"},
+                    },
                 },
-            },
-        })
+            })
         assert cfg.export.otlp_enabled is True
         assert cfg.export.otlp_endpoint == "http://otel:4318"
         assert cfg.export.otlp_headers["Authorization"] == "Bearer xxx"
@@ -269,11 +271,12 @@ class TestBuilder:
         assert len(cfg.tracing.redaction.patterns) == 1
 
     def test_builder_otlp(self) -> None:
-        cfg = (
-            LumenConfig.builder()
-            .otlp("http://collector:4318", enabled=True)
-            .build()
-        )
+        with pytest.warns(ConfigWarning, match="OTLP export is not implemented"):
+            cfg = (
+                LumenConfig.builder()
+                .otlp("http://collector:4318", enabled=True)
+                .build()
+            )
         assert cfg.export.otlp_enabled is True
         assert cfg.export.otlp_endpoint == "http://collector:4318"
 

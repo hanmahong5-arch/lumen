@@ -19,7 +19,7 @@ cd lumen
 
 # CLI (Rust — stable toolchain with Edition 2024 support; verified with 1.96.0)
 cargo build --release
-./target/release/lumen --version   # -> lumen 0.1.0
+./target/release/lumen --version   # -> lumen 0.3.0
 
 # Python SDK (Python 3.10+, editable install from the repo)
 pip install -e ./lumen-sdk                 # SDK core

@@ -28,7 +28,7 @@ class TraceWriter(Protocol):
     """Writes trace data to a storage backend.
 
     Default implementation: JSON file writer in _context.py.
-    Alternatives: SQLite, PostgreSQL, S3, OTLP exporter.
+    Alternatives (future): SQLite, PostgreSQL, S3.
     """
 
     def write_trace(self, trace_data: dict[str, Any]) -> None:

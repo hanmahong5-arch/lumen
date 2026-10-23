@@ -118,7 +118,11 @@ class MonitoringConfig:
 
 @dataclass
 class ExportConfig:
-    """Trace export settings."""
+    """Trace export settings.
+
+    `otlp_*` fields are accepted for forward-compat config parsing only —
+    no OTLP exporter is implemented yet. Enabling them emits a ConfigWarning.
+    """
 
     otlp_enabled: bool = False
     otlp_endpoint: str = ""
@@ -198,6 +202,7 @@ class LumenConfig:
 
         # Compile redaction patterns
         config.tracing.redaction.compile_patterns()
+        config._warn_unimplemented_export()
         return config
 
     @classmethod
@@ -207,6 +212,7 @@ class LumenConfig:
         config._merge_toml(Path(path))
         config._merge_env()
         config.tracing.redaction.compile_patterns()
+        config._warn_unimplemented_export()
         return config
 
     @classmethod
@@ -216,12 +222,26 @@ class LumenConfig:
         config._merge_dict(data)
         config._merge_env()
         config.tracing.redaction.compile_patterns()
+        config._warn_unimplemented_export()
         return config
 
     @classmethod
     def builder(cls) -> ConfigBuilder:
         """Return a fluent builder for constructing config."""
         return ConfigBuilder()
+
+    # ── Honesty rails ─────────────────────────────────────────────────
+
+    def _warn_unimplemented_export(self) -> None:
+        """Warn when config asks for exporters that are not shipped yet."""
+        from lumen._errors import warn_config
+
+        if self.export.otlp_enabled:
+            warn_config(
+                "LUMEN_OTLP_ENABLED / export.otlp is set, but OTLP export is "
+                "not implemented — traces are written to the local trace_dir "
+                "only. Disable otlp_enabled or unset LUMEN_OTLP_ENABLED."
+            )
 
     # ── Internal merge logic ──────────────────────────────────────────
 
@@ -445,6 +465,7 @@ class ConfigBuilder:
         return self
 
     def otlp(self, endpoint: str, *, enabled: bool = True) -> ConfigBuilder:
+        """Record OTLP settings (not implemented — build() will warn if enabled)."""
         o = self._data.setdefault("export", {}).setdefault("otlp", {})
         o["enabled"] = enabled
         o["endpoint"] = endpoint
@@ -456,6 +477,7 @@ class ConfigBuilder:
         config._merge_dict(self._data)
         config._merge_env()
         config.tracing.redaction.compile_patterns()
+        config._warn_unimplemented_export()
         return config
 
 
