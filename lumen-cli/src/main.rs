@@ -176,7 +176,7 @@ enum Commands {
     ///
     /// `--sample` forces the offline path; `--live` refuses to fall back.
     Demo {
-        /// Output HTML file (default `kova-demo-lifecycle.html`).
+        /// Output HTML file (default `lumen-demo-lifecycle.html`).
         #[arg(short, long)]
         output: Option<String>,
         /// Use an already-running Kova instead of spawning one.
@@ -532,6 +532,7 @@ fn finish_export(
         lc.timeline.len(),
         lc.causal.nodes.len()
     );
+    println!("  next: open the HTML, or `lumen dashboard --trace-dir <dir>` for the live UI");
     if !no_open {
         open_path_in_browser(&out_path);
     }
@@ -701,7 +702,7 @@ fn cmd_demo(
         eprintln!("\x1b[31mError: fetching run {run_id}: {e}\x1b[0m");
         return std::process::ExitCode::FAILURE;
     }
-    let code = finish_export(dir, &run_id, "kova-demo-lifecycle.html", output, no_open);
+    let code = finish_export(dir, &run_id, "lumen-demo-lifecycle.html", output, no_open);
 
     // Best-effort cleanup of the throwaway trace dir (the ephemeral kova, if any,
     // is torn down when `_spawned` drops at the end of this scope).
@@ -976,6 +977,8 @@ fn print_cost_report(report: &lumen_core::cost::CostReport, window: &str) {
             );
         }
     }
+
+    println!("\n  next: `lumen traces` · `lumen dashboard` · `lumen demo` (sample lifecycle)");
 }
 
 fn cmd_traces(trace_dir: &str, limit: usize) {
@@ -983,7 +986,8 @@ fn cmd_traces(trace_dir: &str, limit: usize) {
     match store.list() {
         Ok(traces) => {
             if traces.is_empty() {
-                println!("No traces found. Run an agent first.");
+                println!("No traces in `{trace_dir}`.");
+                println!("  next: `lumen demo` for a sample run, or `instrument()` your agent then retry.");
                 return;
             }
             println!(
@@ -1001,9 +1005,16 @@ fn cmd_traces(trace_dir: &str, limit: usize) {
                     trace.duration_ms as f64 / 1000.0
                 );
             }
+            if let Some(first) = traces.first() {
+                println!(
+                    "\n  next: `lumen cost --last 24h` · `lumen replay {}` · `lumen dashboard`",
+                    first.trace_id
+                );
+            }
         }
         Err(e) => {
             eprintln!("\x1b[31mError: {e}\x1b[0m");
+            eprintln!("  next: check --trace-dir, or `lumen demo` to materialize a sample.");
         }
     }
 }

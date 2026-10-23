@@ -2,14 +2,12 @@
 
 # Lumen
 
-面向 AI agent 的可观测性与崩溃恢复工具：回放任意一次运行、追踪每一笔 LLM 花费、故障后从检查点恢复。
+**Agent 失败与烧钱的黑匣子** —— 打开一次运行，立刻看清哪一步贵、哪次工具被拒、崩溃后怎么续。
 
-Lumen 由两部分组成 —— 一次性 `instrument()` 接入的 Python SDK，以及指向落盘 trace 文件的 Rust
-CLI/仪表盘。目标用户是用 LangGraph、CrewAI、AutoGen 或纯 Python 搭建 agent、需要知道「钱花在哪」「第
-几步出的问题」「怎么不重跑就恢复」的开发者。项目目前处于早期 alpha 阶段
-(`Development Status :: 3 - Alpha`，`lumen-sdk/pyproject.toml:22`)：核心的 trace、成本、replay 链路
-已实现并有测试覆盖，LangGraph 是唯一有专用 tracer/checkpointer 的集成，CrewAI/AutoGen 尚未实现。Lumen
-还没有发布到任何包仓库 —— 目前唯一受支持的安装方式是从源码构建。
+Lumen 由两部分组成：一次性 `instrument()` 的 Python SDK，以及读落盘 trace 的 Rust CLI/仪表盘。
+目前完整支持 LangGraph（CrewAI/AutoGen 尚未实现）。Alpha 阶段：核心 trace / 成本 / replay 已落地并有测试。
+CLI 走 GitHub Release 二进制；Python SDK 暂从本仓库安装（**不要** `cargo install lumen-cli` —— crates.io
+上同名包是无关项目）。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.svg">
@@ -35,25 +33,27 @@ CLI/仪表盘。目标用户是用 LangGraph、CrewAI、AutoGen 或纯 Python �
 
 ## 快速开始
 
+**1. 安装 CLI**（无需 Rust）：
+
 ```bash
-git clone https://github.com/hanmahong5-arch/lumen.git
-cd lumen
-
-# CLI (Rust，稳定版工具链需支持 Edition 2024；构建已在 1.96.0 验证)
-cargo build --release
-./target/release/lumen --version   # -> lumen 0.3.0
-
-# Python SDK (Python 3.10+，可编辑安装)
-pip install -e ./lumen-sdk                 # SDK 核心
-pip install -e "./lumen-sdk[langgraph]"    # + LangGraph 集成
-pip install -e "./lumen-sdk[all]"          # + 全部集成
-
-# 测试
-cargo test -p lumen-core -p lumen-cli
-cd lumen-sdk && python -m pytest
+curl -fsSL https://raw.githubusercontent.com/hanmahong5-arch/lumen/main/docs/install-cli.sh | bash
+export PATH="$HOME/.local/bin:$PATH"
+lumen --version   # -> lumen 0.3.0
 ```
 
-完整构建/排障步骤见 [docs/INSTALL.md](docs/INSTALL.md)。
+**2. 一条命令看清生命周期**（离线样例 —— 无需 Kova / API key）：
+
+```bash
+lumen demo
+# 写出 lumen-demo-lifecycle.html 并打开
+```
+
+**3. 给你自己的 agent 埋点**（Python 3.10+）：
+
+```bash
+git clone https://github.com/hanmahong5-arch/lumen.git && cd lumen
+pip install -e "./lumen-sdk[langgraph]"
+```
 
 ```python
 from lumen import instrument, trace
@@ -65,9 +65,8 @@ with trace("research-task") as t:
     print(f"Trace: {t.trace_id}, cost: ${t.total_cost_usd:.4f}")
 ```
 
-手头没有 LangGraph 或 Kova？`lumen demo` 会启动一个临时 `kova-rest`、跑一次真实 agent、并打开生成的
-lifecycle `.html` —— 需要 `KOVA_LLM_API_KEY`，以及 `PATH` 上的 `kova-rest` 二进制（或用 `--kova-url`
-指向一个已在运行的 Kova）。
+有在线 Kova 时可用 `lumen demo --live`（或 `--kova-url`）跑真实 agent。完整安装（Windows 二进制、
+源码构建）见 [docs/INSTALL.md](docs/INSTALL.md)。
 
 ## 架构
 
