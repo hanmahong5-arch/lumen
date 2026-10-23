@@ -56,7 +56,6 @@ from lumen._ring_buffer import MetricsWindow, RingBuffer
 from lumen._trace_index import TraceIndex, TraceMeta
 from lumen._trie import PrefixTrie
 from lumen._writers import CompositeWriter, FileTraceWriter, NullWriter
-from lumen.agent import Agent, AgentResult, traced
 from lumen.config import LumenConfig
 from lumen.cost import CostReport, CostTracker
 from lumen.instrument import atrace, get_metrics, instrument, trace, traced_fn, uninstrument
@@ -65,9 +64,10 @@ from lumen.query import TraceQuery, TraceQueryResult
 from lumen.replay import ReplayEngine, ReplayTrace
 from lumen.trace_reader import AgentTrace, load_traces
 
+# Agent / traced stubs live in lumen.agent but are intentionally NOT exported —
+# use LangGraph + LumenCheckpointer / LumenTracer instead.
+
 __all__ = [
-    "Agent",
-    "AgentResult",
     "AgentTrace",
     "AnomalyDetector",
     "BatchTraceWriter",
@@ -117,7 +117,6 @@ __all__ = [
     "instrument",
     "load_traces",
     "trace",
-    "traced",
     "traced_fn",
     "uninstrument",
 ]

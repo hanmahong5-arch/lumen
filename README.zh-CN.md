@@ -41,7 +41,7 @@ cd lumen
 
 # CLI (Rust，稳定版工具链需支持 Edition 2024；构建已在 1.96.0 验证)
 cargo build --release
-./target/release/lumen --version   # -> lumen 0.1.0
+./target/release/lumen --version   # -> lumen 0.3.0
 
 # Python SDK (Python 3.10+，可编辑安装)
 pip install -e ./lumen-sdk                 # SDK 核心
@@ -83,7 +83,7 @@ lumen-sdk/    Python 包 `lumen-ai`：instrument() 自动埋点、trace 读写�
               Anthropic、LangGraph tracer + checkpointer)。
 ```
 
-数据流：你的 Python 代码 → **Lumen SDK** 把 trace JSON 写盘（或以类 OTLP 方式导出）→ **Lumen Core**
+数据流：你的 Python 代码 → **Lumen SDK** 把 trace JSON 写盘 → **Lumen Core**
 (内嵌在 CLI 里) 读取这些 JSON 做 replay/成本/lifecycle 渲染 → 你的 LLM 供应商只会被你自己的代码调用，
 Lumen 从不代为发起。
 
@@ -101,7 +101,6 @@ SDK 配置按此顺序解析：硬编码默认值 → `~/.lumen/config.toml` →
 | `LUMEN_KILL_ON_BUDGET` | `false` | 超预算是否中止 (`config.py:358`) |
 | `LUMEN_ANOMALY_MULTIPLIER` | `2.0` | 成本离群阈值：超出单次均值的倍数 (`config.py:359`) |
 | `LUMEN_REDACTION_ENABLED` | `false` | 写 trace 前先按规则脱敏 (`config.py:355`) |
-| `LUMEN_OTLP_ENABLED` | `false` | 是否导出到 OTLP 端点 (`config.py:368`) |
 | `LUMEN_NETDATA_URL` | — | 仪表盘 Metrics 标签页数据源，如 `http://localhost:19999` (`main.rs:333`) |
 | `LUMEN_KOVA_URL` | — | `pull`/`export`/`kova`/Terminal 标签页用的 Kova 地址 (`main.rs:350`) |
 | `LUMEN_KOVA_API_KEY` / `KOVA_API_KEY` | — | Kova 的 `X-API-Key`，只留在服务端，绝不下发到浏览器 (`main.rs:341-342`) |

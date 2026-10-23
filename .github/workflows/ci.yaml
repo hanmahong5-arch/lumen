@@ -1,0 +1,49 @@
+# Continuous integration — runs on every push / PR to main.
+# Release tags still use release-lumen-cli.yaml / publish-lumen-sdk.yaml;
+# those workflows must also stay green (publish now gates on pytest).
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust (test + clippy + fmt)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --locked -p lumen-core -p lumen-cli
+      - name: Clippy
+        run: cargo clippy -p lumen-core -p lumen-cli --all-targets --locked -- -D warnings
+      - name: Format
+        run: cargo fmt --check
+
+  python:
+    name: Python SDK (pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lumen-sdk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package (editable + dev)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Pytest
+        run: python -m pytest -q
