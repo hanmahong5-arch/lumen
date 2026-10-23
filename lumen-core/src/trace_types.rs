@@ -1,9 +1,11 @@
 //! Vendored Agent execution trace types.
 //!
-//! vendored from 2b-svc-kova/kova-types/src/trace.rs (v0.2.0), keep in sync
-//! (last synced 2026-06-07: mirrored `TraceStep::policy_deny_reason`;
-//! 2026-06-04: added `TraceStep::cost_usd`; 2026-06-01: added
-//! `AgentTrace::schema_version`)
+//! vendored from 2b-svc-kova/kova-types/src/trace.rs — keep in sync
+//! (last synced 2026-10-23: `TRACE_SCHEMA_VERSION=2`, `tenant`,
+//! `unpriced_llm_calls`; earlier: `policy_deny_reason` / `cost_usd` /
+//! `schema_version` / `parent_trace_id`)
+//! Drift gate: sibling `2b-svc-kova/scripts/lumen-trace-schema-scan.sh`
+//! (SKIP=77 when this checkout is absent).
 //!
 //! Lumen consumes Kova's `AgentTrace`/`TraceStep`/`TraceStepType`/`TraceStatus`
 //! (and their `TokenUsage` dependency) purely as data read back from trace JSON
@@ -87,15 +89,25 @@ pub struct AgentTrace {
     /// (written before this field existed) readable.
     #[serde(default)]
     pub parent_trace_id: Option<String>,
-    /// On-disk trace schema version, stamped by Kova's constructors
-    /// (`TRACE_SCHEMA_VERSION` = 1 at the time of this sync).
-    ///
-    /// `#[serde(default)]` yields `0` for legacy trace JSON written before this
-    /// field existed, letting consumers tell a current trace (`1`) apart from a
-    /// pre-versioning one (`0`) without breaking the read path.
+    /// On-disk trace schema version, stamped by Kova's constructors.
+    /// Current: [`TRACE_SCHEMA_VERSION`] (= 2). A row with
+    /// `schema_version < 2` must not treat `unpriced_llm_calls == 0` as
+    /// "no unpriced calls" — it means the row predates that field.
     #[serde(default)]
     pub schema_version: u32,
+    /// Tenant stamped at write time. Empty = unstamped / legacy; readers
+    /// fall back to the agent registry (same rule as kova-rest).
+    #[serde(default)]
+    pub tenant: String,
+    /// Count of LLM calls on models Kova could not price. Meaningful only
+    /// when `schema_version >= 2`.
+    #[serde(default)]
+    pub unpriced_llm_calls: u64,
 }
+
+/// Must match `kova_types::trace::TRACE_SCHEMA_VERSION`. Drift gate asserts
+/// this constant equals the sibling crate's value.
+pub const TRACE_SCHEMA_VERSION: u32 = 2;
 
 /// A single step within an Agent execution trace.
 #[derive(Debug, Clone, Serialize, Deserialize)]
