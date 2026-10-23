@@ -468,6 +468,9 @@ mod tests {
             completed_at_ms: Some(start + 1000),
             parent_trace_id: parent.map(str::to_string),
             schema_version: 1,
+            // Pre-schema-2 fixture: unstamped tenant, unpriced count not meaningful.
+            tenant: String::new(),
+            unpriced_llm_calls: 0,
         }
     }
 
