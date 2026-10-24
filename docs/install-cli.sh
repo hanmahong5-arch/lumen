@@ -66,7 +66,23 @@ echo "✓ installed ${PREFIX}/lumen"
 echo
 echo "Next:  lumen demo          # offline sample lifecycle HTML (no Kova required)"
 echo "       lumen --help"
-if ! command -v lumen >/dev/null 2>&1; then
+# Require PATH to resolve to *this* binary — a stale `cargo install lumen-cli`
+# (unrelated crates.io crate) would otherwise silence the hint.
+ours="${PREFIX}/lumen"
+on_path="$(command -v lumen 2>/dev/null || true)"
+same=0
+if [ -n "$on_path" ]; then
+  if [ "$on_path" = "$ours" ] || { [ -e "$on_path" ] && [ -e "$ours" ] && [ "$on_path" -ef "$ours" ]; }; then
+    same=1
+  fi
+fi
+if [ "$same" -eq 0 ]; then
   echo
-  echo "Add to PATH if needed:  export PATH=\"${PREFIX}:\$PATH\""
+  if [ -z "$on_path" ]; then
+    echo "Add to PATH if needed:  export PATH=\"${PREFIX}:\$PATH\""
+  else
+    echo "warning: \`lumen\` on PATH is ${on_path}, not ${ours}"
+    echo "  Prefer this install:  export PATH=\"${PREFIX}:\$PATH\""
+    echo "  Do NOT \`cargo install lumen-cli\` — that crates.io name is unrelated."
+  fi
 fi
