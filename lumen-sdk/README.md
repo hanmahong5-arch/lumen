@@ -9,25 +9,19 @@ after crash without re-running), budget control (stop before credits burn).
 
 ## Install
 
-**From source only.** Lumen is not published to any package registry yet: there is
-no `lumen-ai` package on PyPI, and the `lumen-cli` crate on crates.io is an
-**unrelated third-party project** — do not `cargo install lumen-cli`.
+**CLI:** install a Release binary (no Rust) — see [docs/INSTALL.md](../docs/INSTALL.md)
+or run `docs/install-cli.sh`. **Do not** `cargo install lumen-cli` (unrelated crates.io package).
+
+**SDK:** not on PyPI yet — editable install from this repo:
 
 ```bash
 git clone https://github.com/hanmahong5-arch/lumen.git
 cd lumen
-
-# CLI (Rust — stable toolchain with Edition 2024 support; verified with 1.96.0)
-cargo build --release
-./target/release/lumen --version   # -> lumen 0.3.0
-
-# Python SDK (Python 3.10+, editable install from the repo)
 pip install -e ./lumen-sdk                 # SDK core
 pip install -e "./lumen-sdk[langgraph]"    # + LangGraph integration
 pip install -e "./lumen-sdk[all]"          # + all integrations
+lumen demo                                 # offline sample lifecycle HTML
 ```
-
-Step-by-step build instructions and troubleshooting: [docs/INSTALL.md](docs/INSTALL.md).
 
 ## Quick Start — one-line auto-instrumentation
 

@@ -2,16 +2,15 @@
 
 # Lumen
 
-Observability and crash-recovery for AI agents: replay any run, track every LLM dollar, resume after a crash.
+**The black box for agent failures and spend** — open a run and see which step burned money,
+which tool was refused, and how to continue after a crash.
 
 Lumen is a two-part developer tool — a Python SDK you `instrument()` once, and a Rust CLI/dashboard
-you point at the resulting trace files — for anyone building agents with LangGraph, CrewAI, AutoGen,
-or plain Python who needs to know where the money went, what happened at a given step, and how to
-resume a run without re-executing it from scratch. It is an early-stage, alpha project
-(`Development Status :: 3 - Alpha`, `lumen-sdk/pyproject.toml:22`): the core tracing, cost, and replay
-paths are implemented and tested, LangGraph is the one integration with a dedicated tracer/checkpointer,
-and CrewAI/AutoGen support is not built yet. Lumen is not published to any package registry — building
-from source is the only supported install path today.
+you point at the resulting trace files. LangGraph is the one fully supported integration today
+(CrewAI/AutoGen are not built yet). Alpha (`Development Status :: 3 - Alpha`): core tracing, cost,
+and replay are implemented and tested. The CLI ships as GitHub Release binaries; the Python SDK
+installs from this repo until PyPI publish (do **not** `cargo install lumen-cli` — that crates.io
+name is unrelated).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.svg">
@@ -38,25 +37,27 @@ from source is the only supported install path today.
 
 ## Quick start
 
+**1. Install the CLI** (no Rust required):
+
 ```bash
-git clone https://github.com/hanmahong5-arch/lumen.git
-cd lumen
-
-# CLI (Rust, stable toolchain with Edition 2024 support; build verified with 1.96.0)
-cargo build --release
-./target/release/lumen --version   # -> lumen 0.3.0
-
-# Python SDK (Python 3.10+, editable install)
-pip install -e ./lumen-sdk                 # SDK core
-pip install -e "./lumen-sdk[langgraph]"    # + LangGraph integration
-pip install -e "./lumen-sdk[all]"          # + all integrations
-
-# Tests
-cargo test -p lumen-core -p lumen-cli
-cd lumen-sdk && python -m pytest
+curl -fsSL https://raw.githubusercontent.com/hanmahong5-arch/lumen/main/docs/install-cli.sh | bash
+export PATH="$HOME/.local/bin:$PATH"
+lumen --version   # -> lumen 0.3.0
 ```
 
-Full build/troubleshooting steps: [docs/INSTALL.md](docs/INSTALL.md).
+**2. See a lifecycle in one command** (offline sample — no Kova, no API key):
+
+```bash
+lumen demo
+# writes lumen-demo-lifecycle.html and opens it
+```
+
+**3. Trace your own agent** (Python 3.10+):
+
+```bash
+git clone https://github.com/hanmahong5-arch/lumen.git && cd lumen
+pip install -e "./lumen-sdk[langgraph]"
+```
 
 ```python
 from lumen import instrument, trace
@@ -68,9 +69,8 @@ with trace("research-task") as t:
     print(f"Trace: {t.trace_id}, cost: ${t.total_cost_usd:.4f}")
 ```
 
-No LangGraph or Kova at hand? `lumen demo` spins up an ephemeral `kova-rest`, runs one real agent, and
-opens the resulting lifecycle `.html` — needs `KOVA_LLM_API_KEY` and a `kova-rest` binary on `PATH` (or
-point `--kova-url` at a Kova you already run).
+Have a live Kova? `lumen demo --live` (or `--kova-url`) runs a real agent instead of the sample.
+Full install options (Windows binary, source build): [docs/INSTALL.md](docs/INSTALL.md).
 
 ## Architecture
 
