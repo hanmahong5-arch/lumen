@@ -69,6 +69,9 @@ with trace("research-task") as t:
     print(f"Trace: {t.trace_id}, cost: ${t.total_cost_usd:.4f}")
 ```
 
+Crash mid-run with LangGraph? Keep the same `thread_id` and print
+`LumenCheckpointer(...).resume_hint(thread_id)` — full ritual in [docs/RESUME.md](docs/RESUME.md).
+
 Have a live Kova? `lumen demo --live` (or `--kova-url`) runs a real agent instead of the sample.
 Full install options (Windows binary, source build): [docs/INSTALL.md](docs/INSTALL.md).
 
