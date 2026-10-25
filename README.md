@@ -93,6 +93,17 @@ Data flow: your Python code → **Lumen SDK** writes trace JSON to disk →
 **Lumen Core** (embedded in the CLI) reads that JSON for replay/cost/lifecycle rendering → your LLM
 provider is only ever called by your own code, never by Lumen.
 
+## Core vs Connected
+
+| Layer | Needs | What you get |
+|---|---|---|
+| **Core** (always on) | Local traces only | `instrument` / `replay` / `cost` / `traces` / Lifecycle / Overview |
+| **Connected** (optional) | `--kova-url` and/or `--netdata-url` | Flow, Terminal, Governor advisory, live Metrics |
+
+Kova is a **deepener**, not a prerequisite. Local crash-recovery storytelling works via
+LangGraph `LumenCheckpointer` + lifecycle HTML; WAL-depth recovery and Flow/Governor live on Kova.
+10-minute joint path: [docs/CONNECTED.md](docs/CONNECTED.md).
+
 ## Configuration
 
 SDK config resolves in order: hardcoded defaults → `~/.lumen/config.toml` → `./lumen.toml` (walked up

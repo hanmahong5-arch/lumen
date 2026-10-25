@@ -168,6 +168,12 @@
   .cfgcard p { margin: 8px 0; }
   .cfgcard code { background: var(--bg); padding: 2px 7px; border-radius: 6px; color: var(--accent); }
   .cfgcard .muted { color: var(--muted); }
+  .layer-bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 14px; padding:10px 12px; background:var(--panel2); border:1px solid var(--border); border-radius:10px; font-size:12px; }
+  .layer-bar .chip { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; border:1px solid var(--border2); background:var(--bg); color:var(--muted); }
+  .layer-bar .chip.on { color:var(--text); border-color:rgba(34,197,94,.35); }
+  .layer-bar .chip .dot { width:7px; height:7px; border-radius:50%; background:var(--muted2); }
+  .layer-bar .chip.on .dot { background:var(--ok, #22c55e); }
+  .layer-bar .hint { color:var(--muted); margin-left:4px; }
   .deeplink { background: var(--panel2); border: 1px solid var(--border2); color: var(--accent); font: inherit; font-size: 12px; font-weight: 600; padding: 6px 12px; border-radius: 8px; cursor: pointer; margin-bottom: 14px; }
   .deeplink:hover { background: var(--panel); filter: brightness(1.1); }
 
@@ -1177,12 +1183,47 @@ function termComplete(inp) {
 }
 
 /* ---------- overview ---------- */
-function renderOverview() {
+function layerBarHtml() {
+  const kOn = KOVA.configured && KOVA.reachable;
+  const nOn = NETDATA.configured && NETDATA.reachable;
+  const kChip = KOVA.configured
+    ? (kOn ? "Kova connected" : "Kova configured · unreachable")
+    : "Kova off (Core only)";
+  const nChip = NETDATA.configured
+    ? (nOn ? "Netdata connected" : "Netdata configured · unreachable")
+    : "Netdata off";
+  return `<div class="layer-bar" role="status" aria-label="Core and Connected layer status">
+    <span class="chip on"><span class="dot"></span>Core · Traces / Lifecycle / Cost</span>
+    <span class="chip ${kOn?"on":""}"><span class="dot"></span>${esc(kChip)}</span>
+    <span class="chip ${nOn?"on":""}"><span class="dot"></span>${esc(nChip)}</span>
+    <span class="hint">Flow / Terminal / Metrics unlock when Connected</span>
+  </div>`;
+}
+async function ensureConnectedProbes() {
+  if (!KOVA.loaded) {
+    try {
+      const j = await (await fetch("/api/kova-status")).json();
+      KOVA = {configured:!!j.configured, reachable:!!j.reachable, loaded:true};
+    } catch (_) {
+      KOVA = {configured:false, reachable:false, loaded:true};
+    }
+  }
+  // NETDATA is refreshed in load(); if never probed, ask once.
+  if (!NETDATA.configured && !NETDATA.reachable) {
+    try {
+      NETDATA = await (await fetch("/api/netdata-status")).json();
+    } catch (_) {
+      NETDATA = {configured:false, reachable:false};
+    }
+  }
+}
+async function renderOverview() {
   const root = document.getElementById("root");
+  await ensureConnectedProbes();
   if (!TRACES.length) {
-    root.innerHTML = LOAD_ERROR
+    root.innerHTML = layerBarHtml() + (LOAD_ERROR
       ? `<div class="empty">Can't reach the trace store.<br><br>Check that <code>lumen dashboard</code> is running and pointed at the right <code>--trace-dir</code> — this refreshes automatically once it responds.</div>`
-      : `<div class="empty">No traces yet.<br><br>Pull from a running Kova:<br><br><code>lumen pull --kova-url http://&lt;host&gt;:3010 --api-key &lt;key&gt;</code></div>`;
+      : `<div class="empty">No traces yet.<br><br>Core path (no Kova): <code>lumen demo</code><br><br>Connected path: <code>lumen pull --kova-url http://&lt;host&gt;:3010 --api-key &lt;key&gt;</code></div>`);
     return;
   }
 
@@ -1219,7 +1260,7 @@ function renderOverview() {
   ].filter(x=>x.value>0);
   const modelDonut = Object.entries(models).map(([m,v],i)=>({label:m,value:v,color:PALETTE[i%PALETTE.length]}));
 
-  root.innerHTML = `
+  root.innerHTML = layerBarHtml() + `
     <div class="kpis">
       <div class="kpi"><div class="k">runs</div><div class="v">${runs}</div><div class="d">${recovered} crash-recovered</div></div>
       <div class="kpi"><div class="k">total cost</div><div class="v">${fmtUsd(cost)}</div><div class="d">${fmtUsd(mean)} avg / run</div></div>

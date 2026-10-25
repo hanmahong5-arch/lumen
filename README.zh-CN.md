@@ -86,6 +86,16 @@ lumen-sdk/    Python 包 `lumen-ai`：instrument() 自动埋点、trace 读写�
 (内嵌在 CLI 里) 读取这些 JSON 做 replay/成本/lifecycle 渲染 → 你的 LLM 供应商只会被你自己的代码调用，
 Lumen 从不代为发起。
 
+## Core vs Connected
+
+| 层 | 需要 | 得到什么 |
+|---|---|---|
+| **Core**（默认） | 仅本地 traces | `instrument` / `replay` / `cost` / `traces` / Lifecycle / Overview |
+| **Connected**（可选） | `--kova-url` 和/或 `--netdata-url` | Flow、Terminal、Governor advisory、live Metrics |
+
+Kova 是**加深器**，不是门槛。本地崩溃恢复靠 LangGraph `LumenCheckpointer` + lifecycle HTML；
+WAL 深度恢复与 Flow/Governor 在 Kova 侧。十分钟联运路径见 [docs/CONNECTED.md](docs/CONNECTED.md)。
+
 ## 配置
 
 SDK 配置按此顺序解析：硬编码默认值 → `~/.lumen/config.toml` → `./lumen.toml`（从 cwd 向上查找）→
