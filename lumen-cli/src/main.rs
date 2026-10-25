@@ -39,7 +39,7 @@ enum Commands {
         /// Trace directory.
         #[arg(long, default_value = "./traces", alias = "wal-dir")]
         trace_dir: String,
-        /// Output format (text or json).
+        /// Output format: `text`, `json`, or `md` (pasteable incident summary).
         #[arg(long, default_value = "text")]
         format: String,
     },
@@ -884,12 +884,26 @@ fn cmd_replay(trace_id: &str, trace_dir: &str, from_step: Option<u32>) {
             }
             if trace.success {
                 println!("\n\x1b[32m✅ Run completed successfully\x1b[0m");
+                println!(
+                    "  next: `lumen cost --last 24h` · `lumen export {trace_id}` (shareable lifecycle)"
+                );
             } else {
                 println!("\n\x1b[31m❌ Run failed\x1b[0m");
+                if let Some(ref r) = trace.recovery {
+                    println!(
+                        "  resume chain: parent `{}` — export the pair with `lumen export {trace_id}`",
+                        r.parent_trace_id
+                    );
+                } else {
+                    println!(
+                        "  next: if this was LangGraph, resume from the last LumenCheckpointer; else `lumen export {trace_id}` for the incident HTML"
+                    );
+                }
             }
         }
         Err(e) => {
             eprintln!("\x1b[31mError: {e}\x1b[0m");
+            eprintln!("  next: `lumen traces` to list ids, or `lumen demo` for a sample.");
         }
     }
 }
@@ -921,23 +935,59 @@ fn cmd_cost(last: &str, trace_dir: &str, format: &str) {
     let since_ms = parse_duration(last);
 
     match tracker.report(since_ms) {
-        Ok(report) => {
-            if format == "json" {
+        Ok(report) => match format {
+            "json" => {
                 if let Ok(json) = serde_json::to_string_pretty(&report) {
                     println!("{json}");
                 }
-            } else {
-                print_cost_report(&report, last);
             }
-        }
+            "md" | "markdown" => print_cost_markdown(&report, last),
+            _ => print_cost_report(&report, last),
+        },
         Err(e) => {
             eprintln!("\x1b[31mError: {e}\x1b[0m");
+            eprintln!("  next: check --trace-dir, or `lumen demo` for a sample.");
         }
+    }
+}
+
+fn cost_headline(report: &lumen_core::cost::CostReport) -> String {
+    if report.total_runs == 0 {
+        return "No runs in this window.".into();
+    }
+    let mut agents: Vec<_> = report.by_agent.iter().collect();
+    agents.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
+    let top = agents.first().map(|(n, c)| {
+        let pct = if report.total_usd > 0.0 {
+            *c / report.total_usd * 100.0
+        } else {
+            0.0
+        };
+        format!("{n} burned {pct:.0}% of spend")
+    });
+    let outliers = report.anomalies.len();
+    match (top, outliers) {
+        (Some(t), 0) => format!("{t}."),
+        (Some(t), n) => format!("{t}; {n} cost outlier(s) — investigate before the next run."),
+        (None, 0) => format!(
+            "{} run(s), ${:.2} total.",
+            report.total_runs, report.total_usd
+        ),
+        (None, n) => format!(
+            "{} run(s), ${:.2} total; {n} cost outlier(s).",
+            report.total_runs, report.total_usd
+        ),
     }
 }
 
 fn print_cost_report(report: &lumen_core::cost::CostReport, window: &str) {
     println!("\x1b[36m📊 Cost Report (last {window})\x1b[0m");
+    if report.total_runs == 0 {
+        println!("  No runs in this window.");
+        println!("  next: `lumen demo` · `lumen traces` · instrument an agent then retry");
+        return;
+    }
+    println!("  \x1b[1m{}\x1b[0m", cost_headline(report));
     println!(
         "  Total: \x1b[1m${:.2}\x1b[0m across {} runs",
         report.total_usd, report.total_runs
@@ -976,9 +1026,59 @@ fn print_cost_report(report: &lumen_core::cost::CostReport, window: &str) {
                 a.trace_id, a.agent_name, a.cost_usd, a.multiplier, a.reason
             );
         }
+        if let Some(a) = report.anomalies.first() {
+            println!(
+                "\n  next: `lumen replay {}` · `lumen export {}` (shareable HTML) · `lumen cost --format md`",
+                a.trace_id, a.trace_id
+            );
+            return;
+        }
     }
 
-    println!("\n  next: `lumen traces` · `lumen dashboard` · `lumen demo` (sample lifecycle)");
+    println!(
+        "\n  next: `lumen traces` · `lumen dashboard` · `lumen cost --format md` (paste into a ticket)"
+    );
+}
+
+fn print_cost_markdown(report: &lumen_core::cost::CostReport, window: &str) {
+    println!("## Lumen cost incident — last {window}");
+    println!();
+    println!("**Headline:** {}", cost_headline(report));
+    println!();
+    println!("| Metric | Value |");
+    println!("| --- | --- |");
+    println!("| Total USD | ${:.4} |", report.total_usd);
+    println!("| Runs | {} |", report.total_runs);
+    println!(
+        "| Tokens | {} prompt + {} completion |",
+        report.total_prompt_tokens, report.total_completion_tokens
+    );
+    if !report.by_agent.is_empty() {
+        println!();
+        println!("### By agent");
+        let mut agents: Vec<_> = report.by_agent.iter().collect();
+        agents.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
+        for (agent, cost) in agents {
+            println!("- `{agent}`: ${cost:.4}");
+        }
+    }
+    if !report.anomalies.is_empty() {
+        println!();
+        println!("### Outliers");
+        for a in &report.anomalies {
+            println!(
+                "- `{}` ({}) ${:.4} ({:.1}×) — {}",
+                a.trace_id, a.agent_name, a.cost_usd, a.multiplier, a.reason
+            );
+        }
+        if let Some(a) = report.anomalies.first() {
+            println!();
+            println!(
+                "Repro: `lumen replay {}` · share: `lumen export {}`",
+                a.trace_id, a.trace_id
+            );
+        }
+    }
 }
 
 fn cmd_traces(trace_dir: &str, limit: usize) {
