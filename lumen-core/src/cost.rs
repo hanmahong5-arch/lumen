@@ -87,7 +87,8 @@ pub struct CostAnomaly {
 ///
 /// If `total_cost_usd > 0`, uses it directly.
 /// Otherwise estimates from per-step token usage and model pricing.
-fn trace_cost(trace: &AgentTrace) -> f64 {
+/// Public to `lumen-core` so replay can report the same USD as `CostTracker`.
+pub(crate) fn trace_cost(trace: &AgentTrace) -> f64 {
     if trace.total_cost_usd > 0.0 {
         return trace.total_cost_usd;
     }
