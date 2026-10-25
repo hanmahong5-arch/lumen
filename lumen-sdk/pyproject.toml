@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "lumen-ai"
 version = "0.2.1"
-description = "Developer tools for AI agent reliability — replay, cost tracking, crash recovery"
+description = "Black box for AI agent failures and spend — replay, cost, crash-safe checkpoints"
 # Kept as a copy of the repo-root README: a "../README.md" reference leaks a
 # path-traversal member into the sdist, which PEP 706 extraction filters reject.
 readme = "README.md"
