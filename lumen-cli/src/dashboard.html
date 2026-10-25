@@ -737,6 +737,9 @@ function skeletonHtml(kind) {
   if (kind === "terminal") {
     return `<div role="status" aria-live="polite" aria-label="Connecting to Kova">${ghost("term")}</div>`;
   }
+  if (kind === "flow") {
+    return `<div role="status" aria-live="polite" aria-label="Checking Kova for Flow" style="padding:40px" class="muted">Checking whether Kova is configured…</div>`;
+  }
   return `<div role="status" aria-live="polite" aria-label="Loading traces">
     <div class="kpis">${Array.from({length:6},()=>ghost("kpi")).join("")}</div>
     <div class="grid">${ghost("panel col-6")}${ghost("panel col-6")}${ghost("panel col-4")}${ghost("panel col-4")}${ghost("panel col-4")}</div>
@@ -923,8 +926,27 @@ async function loadFlow(){
 // Mount-once: build the controls only when absent so the 4s poll's re-render
 // never steals focus mid-type; only the result body re-renders (mirrors the
 // Terminal tab's mount-once discipline).
+function flowUnlockCard(){
+  return `<div class="cfgcard">
+    <h3>🔀 Flow — connect Kova</h3>
+    <p class="muted">Flow is a <b>Connected</b> surface: Markov transitions and Bayesian outcome risk come from a live Kova. Local Core (Traces / Lifecycle / Cost) works without it.</p>
+    <p>Restart the dashboard pointed at your Kova:</p>
+    <p><code>lumen dashboard --kova-url http://localhost:3010 --api-key sk-kova-…</code></p>
+    <p class="muted">…or set <code>LUMEN_KOVA_URL</code> + <code>LUMEN_KOVA_API_KEY</code>. Until then, stay on Traces / Lifecycle for local black-box review.</p>
+  </div>`;
+}
 function renderFlow(){
   const root=document.getElementById("root");
+  // Probe Kova once (shared with Terminal) so Flow never looks "broken empty"
+  // when the unlock condition is simply missing --kova-url.
+  if (!KOVA.loaded) {
+    fetch("/api/kova-status").then(r=>r.json())
+      .then(j=>{ KOVA = {configured:!!j.configured, reachable:!!j.reachable, loaded:true}; if (VIEW==="flow") renderFlow(); })
+      .catch(()=>{ KOVA = {configured:false, reachable:false, loaded:true}; if (VIEW==="flow") renderFlow(); });
+    root.innerHTML = skeletonHtml("flow");
+    return;
+  }
+  if (!KOVA.configured) { root.innerHTML = flowUnlockCard(); return; }
   if(!document.getElementById("flow-type")){
     root.innerHTML = '<div style="max-width:1180px;margin:0 auto">'+flowControlsHtml()+'<div id="flow-body"></div></div>';
     wireFlow();
