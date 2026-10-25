@@ -82,10 +82,7 @@ fn cost_and_replay_match_shared_expectations() {
             .unwrap_or_else(|| panic!("missing expectation for {name}"));
         assert_eq!(trace.trace_id, exp.trace_id);
 
-        let dir = std::env::temp_dir().join(format!(
-            "lumen_parity_{name}_{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("lumen_parity_{name}_{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         materialize(&dir, &body, &trace.trace_id);
@@ -110,7 +107,10 @@ fn cost_and_replay_match_shared_expectations() {
             exp.replay_original_cost_usd
         );
         let parent = replay.recovery.as_ref().map(|r| r.parent_trace_id.clone());
-        let resumed = replay.recovery.as_ref().and_then(|r| r.resumed_at_iteration);
+        let resumed = replay
+            .recovery
+            .as_ref()
+            .and_then(|r| r.resumed_at_iteration);
         assert_eq!(parent, exp.replay_parent, "{name}");
         assert_eq!(resumed, exp.replay_resumed_at, "{name}");
 
