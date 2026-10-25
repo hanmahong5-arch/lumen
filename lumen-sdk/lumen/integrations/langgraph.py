@@ -17,12 +17,14 @@ Example::
         config={"callbacks": [tracer]},
     )
 
-    # Process crash → restart → resumes from last checkpoint.
-    # Traces enable: lumen replay / lumen cost
+    # Process crash → restart with the SAME thread_id → resumes from last checkpoint.
+    # Or print the exact config after a crash:
+    #   print(checkpointer.resume_hint("research-1"))
+    # Traces enable: lumen replay / lumen cost / lumen export
     # Zero external services. Zero configuration.
 
-Install from the ``lumen-sdk`` source directory: ``pip install -e ".[langgraph]"``
-(the package is not published on PyPI).
+Install from the ``lumen-sdk`` source directory: ``pip install -e ".[langgraph]"``.
+See also ``docs/RESUME.md``.
 """
 
 from __future__ import annotations
@@ -284,6 +286,62 @@ class LumenCheckpointer(_Base):  # type: ignore[misc]
             ))
 
         self._save_thread(thread_id)
+
+    # ── Resume affordances (no LLM; safe after a crash) ─────────────────
+
+    def list_threads(self) -> list[str]:
+        """Return thread ids that have at least one checkpoint (sorted)."""
+        return sorted({key[0] for key in self._checkpoints})
+
+    def latest_config(
+        self,
+        thread_id: str,
+        *,
+        checkpoint_ns: str = "",
+    ) -> dict[str, Any] | None:
+        """Return the ``config`` dict for the newest checkpoint of a thread.
+
+        Pass this (plus your usual callbacks) to ``graph.invoke`` / ``ainvoke``
+        after a crash. Returns ``None`` when the thread has no checkpoints.
+        """
+        matching = [
+            key
+            for key in self._checkpoints
+            if key[0] == thread_id and key[1] == checkpoint_ns
+        ]
+        if not matching:
+            return None
+        key = max(matching, key=lambda k: k[2])
+        return {
+            "configurable": {
+                "thread_id": key[0],
+                "checkpoint_ns": key[1],
+                "checkpoint_id": key[2],
+            }
+        }
+
+    def resume_hint(self, thread_id: str, *, checkpoint_ns: str = "") -> str:
+        """Human-readable next steps to resume a thread after a process crash."""
+        cfg = self.latest_config(thread_id, checkpoint_ns=checkpoint_ns)
+        if cfg is None:
+            return (
+                f"No checkpoint for thread `{thread_id}` under `{self.storage_dir}`.\n"
+                "  next: start a new run with the same checkpointer, or `lumen demo`."
+            )
+        conf = cfg["configurable"]
+        return (
+            f"Resume thread `{thread_id}` from checkpoint `{conf['checkpoint_id']}` "
+            f"(storage: {self.storage_dir}):\n\n"
+            "  graph.invoke(\n"
+            "      None,  # continue; do not re-send the original user message\n"
+            "      config={\n"
+            f"          \"configurable\": {conf!r},\n"
+            "          \"callbacks\": [LumenTracer(trace_dir=\"./traces\")],\n"
+            "      },\n"
+            "  )\n\n"
+            "  next: `lumen traces` · `lumen export <trace-id>` · "
+            "`lumen cost --format md`"
+        )
 
     # ── Persistence ─────────────────────────────────────────────────────
 

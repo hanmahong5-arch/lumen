@@ -65,6 +65,9 @@ with trace("research-task") as t:
     print(f"Trace: {t.trace_id}, cost: ${t.total_cost_usd:.4f}")
 ```
 
+LangGraph 跑到一半崩了？保持同一 `thread_id`，打印
+`LumenCheckpointer(...).resume_hint(thread_id)` —— 完整仪式见 [docs/RESUME.md](docs/RESUME.md)。
+
 有在线 Kova 时可用 `lumen demo --live`（或 `--kova-url`）跑真实 agent。完整安装（Windows 二进制、
 源码构建）见 [docs/INSTALL.md](docs/INSTALL.md)。
 
