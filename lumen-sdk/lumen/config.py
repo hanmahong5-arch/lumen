@@ -120,8 +120,9 @@ class MonitoringConfig:
 class ExportConfig:
     """Trace export settings.
 
-    `otlp_*` fields are accepted for forward-compat config parsing only —
-    no OTLP exporter is implemented yet. Enabling them emits a ConfigWarning.
+    When ``otlp_enabled`` is true and ``otlp_endpoint`` is set, the SDK fans
+    out each completed trace to that collector via OTLP/HTTP JSON (in addition
+    to the local ``trace_dir`` file writer).
     """
 
     otlp_enabled: bool = False
@@ -233,14 +234,15 @@ class LumenConfig:
     # ── Honesty rails ─────────────────────────────────────────────────
 
     def _warn_unimplemented_export(self) -> None:
-        """Warn when config asks for exporters that are not shipped yet."""
+        """Warn on export misconfiguration (enabled without an endpoint)."""
         from lumen._errors import warn_config
 
-        if self.export.otlp_enabled:
+        if self.export.otlp_enabled and not self.export.otlp_endpoint.strip():
             warn_config(
-                "LUMEN_OTLP_ENABLED / export.otlp is set, but OTLP export is "
-                "not implemented — traces are written to the local trace_dir "
-                "only. Disable otlp_enabled or unset LUMEN_OTLP_ENABLED."
+                "LUMEN_OTLP_ENABLED / export.otlp.enabled is set, but "
+                "otlp_endpoint is empty — OTLP export is disabled. Set "
+                "LUMEN_OTLP_ENDPOINT or export.otlp.endpoint "
+                "(e.g. http://localhost:4318)."
             )
 
     # ── Internal merge logic ──────────────────────────────────────────
@@ -465,7 +467,7 @@ class ConfigBuilder:
         return self
 
     def otlp(self, endpoint: str, *, enabled: bool = True) -> ConfigBuilder:
-        """Record OTLP settings (not implemented — build() will warn if enabled)."""
+        """Enable OTLP/HTTP JSON export to ``endpoint`` (appends /v1/traces if needed)."""
         o = self._data.setdefault("export", {}).setdefault("otlp", {})
         o["enabled"] = enabled
         o["endpoint"] = endpoint

@@ -49,4 +49,10 @@ If the binary is missing, fall back to Core sample: `lumen demo` (offline).
 
 - Connected features without a reachable Kova/Netdata
 - That Lumen itself runs durable WAL agents (that is Kova)
-- OTLP export (not implemented; enabling it only warns)
+
+## OTLP export (optional)
+
+Set `LUMEN_OTLP_ENABLED=1` and `LUMEN_OTLP_ENDPOINT=http://localhost:4318`
+(or `export.otlp` in `lumen.toml`). Each completed trace is POSTed as
+OTLP/HTTP JSON to `{endpoint}/v1/traces` in addition to the local
+`trace_dir`. Stdlib only — no OpenTelemetry SDK dependency.
