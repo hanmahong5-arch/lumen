@@ -1,0 +1,39 @@
+{
+  "_comment": "Shared Rust/Python cost+replay expectations for trace_examples.json. Asserted by lumen-core/tests/behavior_parity.rs and lumen-sdk/tests/test_behavior_parity.py.",
+  "normal_multi_step": {
+    "trace_id": "trace_normal_001",
+    "cost_usd": 0.0123,
+    "replay_success": true,
+    "replay_iterations": 2,
+    "replay_original_cost_usd": 0.0123,
+    "replay_parent": null,
+    "replay_resumed_at": null
+  },
+  "recovered_with_parent": {
+    "trace_id": "trace_recovered_002",
+    "cost_usd": 4.5,
+    "replay_success": true,
+    "replay_iterations": 1,
+    "replay_original_cost_usd": 4.5,
+    "replay_parent": "trace_normal_001",
+    "replay_resumed_at": 4
+  },
+  "legacy_no_parent_field": {
+    "trace_id": "trace_legacy_003",
+    "cost_usd": 4.5,
+    "replay_success": true,
+    "replay_iterations": 1,
+    "replay_original_cost_usd": 4.5,
+    "replay_parent": null,
+    "replay_resumed_at": null
+  },
+  "failed_trace": {
+    "trace_id": "trace_failed_004",
+    "cost_usd": 1.35,
+    "replay_success": false,
+    "replay_iterations": 1,
+    "replay_original_cost_usd": 1.35,
+    "replay_parent": null,
+    "replay_resumed_at": null
+  }
+}

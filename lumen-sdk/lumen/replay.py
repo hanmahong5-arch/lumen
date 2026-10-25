@@ -27,6 +27,14 @@ class ReplayStep:
 
 
 @dataclass
+class RecoveryInfo:
+    """Crash-recovery provenance (mirrors Rust ``replay::RecoveryInfo``)."""
+
+    parent_trace_id: str
+    resumed_at_iteration: int | None = None
+
+
+@dataclass
 class ReplayTrace:
     """Full replay of an agent run."""
 
@@ -35,6 +43,26 @@ class ReplayTrace:
     original_cost_usd: float = 0.0
     total_iterations: int = 0
     success: bool = False
+    recovery: RecoveryInfo | None = None
+
+
+def _extract_recovery(trace: AgentTrace) -> RecoveryInfo | None:
+    """Mirror Rust ``extract_recovery`` — parent_trace_id + optional resume iter."""
+    if not trace.parent_trace_id:
+        return None
+    resumed: int | None = None
+    if trace.steps:
+        for key, val in trace.steps[0].metadata:
+            if key == "resumed_at_iteration":
+                try:
+                    resumed = int(val)
+                except ValueError:
+                    resumed = None
+                break
+    return RecoveryInfo(
+        parent_trace_id=trace.parent_trace_id,
+        resumed_at_iteration=resumed,
+    )
 
 
 def _estimate_trace_cost(trace: AgentTrace) -> float:
@@ -193,6 +221,7 @@ class ReplayEngine:
             original_cost_usd=_estimate_trace_cost(target),
             total_iterations=llm_count,
             success=target.status == "Completed",
+            recovery=_extract_recovery(target),
         )
 
     def list_traces(self) -> list[str]:

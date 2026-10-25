@@ -129,7 +129,8 @@ impl ReplayEngine {
             trace_id: trace.trace_id.clone(),
             agent_name: trace.agent_id.clone(),
             steps,
-            original_cost_usd: trace.total_cost_usd,
+            // Same USD rule as CostTracker: prefer recorded total, else estimate.
+            original_cost_usd: crate::cost::trace_cost(trace),
             total_iterations: trace
                 .steps
                 .iter()
