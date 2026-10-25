@@ -386,12 +386,30 @@ def get_metrics() -> Any:
 def _create_writer(config: Any) -> Any:
     """Build the trace writer pipeline from config.
 
-    If buffer_size > 1, wraps the file writer in a BatchTraceWriter.
-    Otherwise returns a direct FileTraceWriter.
+    Always writes to the local FileTraceWriter. When OTLP export is enabled
+    with an endpoint, fans out via CompositeWriter. If buffer_size > 1,
+    wraps the result in a BatchTraceWriter.
     """
-    from lumen._writers import FileTraceWriter
+    from lumen._writers import CompositeWriter, FileTraceWriter
 
-    base_writer = FileTraceWriter(config.tracing.trace_dir)
+    writers: list[Any] = [FileTraceWriter(config.tracing.trace_dir)]
+
+    export = getattr(config, "export", None)
+    if (
+        export is not None
+        and getattr(export, "otlp_enabled", False)
+        and str(getattr(export, "otlp_endpoint", "") or "").strip()
+    ):
+        from lumen._otlp import OtlpHttpTraceWriter
+
+        writers.append(
+            OtlpHttpTraceWriter(
+                export.otlp_endpoint,
+                headers=getattr(export, "otlp_headers", None) or {},
+            )
+        )
+
+    base_writer: Any = writers[0] if len(writers) == 1 else CompositeWriter(writers)
 
     if config.tracing.buffer_size > 1:
         from lumen._batch_writer import BatchTraceWriter

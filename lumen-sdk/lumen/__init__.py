@@ -55,6 +55,7 @@ from lumen._redaction import RedactionEngine, RedactionPattern
 from lumen._ring_buffer import MetricsWindow, RingBuffer
 from lumen._trace_index import TraceIndex, TraceMeta
 from lumen._trie import PrefixTrie
+from lumen._otlp import OtlpHttpTraceWriter
 from lumen._writers import CompositeWriter, FileTraceWriter, NullWriter
 from lumen.config import LumenConfig
 from lumen.cost import CostReport, CostTracker
@@ -92,6 +93,7 @@ __all__ = [
     "MetricsWindow",
     "MiddlewareChain",
     "NullWriter",
+    "OtlpHttpTraceWriter",
     "PrefixTrie",
     "PricingProvider",
     "RedactionEngine",

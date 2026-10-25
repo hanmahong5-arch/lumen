@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import textwrap
+import warnings
 from pathlib import Path
 
 import pytest
@@ -117,7 +118,8 @@ class TestFromDict:
         assert cfg.monitoring.dashboard_host == "0.0.0.0"
 
     def test_export_otlp(self) -> None:
-        with pytest.warns(ConfigWarning, match="OTLP export is not implemented"):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             cfg = LumenConfig.from_dict({
                 "export": {
                     "otlp": {
@@ -127,9 +129,18 @@ class TestFromDict:
                     },
                 },
             })
+        assert not any(issubclass(w.category, ConfigWarning) for w in caught)
         assert cfg.export.otlp_enabled is True
         assert cfg.export.otlp_endpoint == "http://otel:4318"
         assert cfg.export.otlp_headers["Authorization"] == "Bearer xxx"
+
+    def test_export_otlp_enabled_without_endpoint_warns(self) -> None:
+        with pytest.warns(ConfigWarning, match="otlp_endpoint is empty"):
+            cfg = LumenConfig.from_dict({
+                "export": {"otlp": {"enabled": True, "endpoint": ""}},
+            })
+        assert cfg.export.otlp_enabled is True
+        assert cfg.export.otlp_endpoint == ""
 
     def test_empty_dict(self) -> None:
         cfg = LumenConfig.from_dict({})
@@ -271,12 +282,14 @@ class TestBuilder:
         assert len(cfg.tracing.redaction.patterns) == 1
 
     def test_builder_otlp(self) -> None:
-        with pytest.warns(ConfigWarning, match="OTLP export is not implemented"):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             cfg = (
                 LumenConfig.builder()
                 .otlp("http://collector:4318", enabled=True)
                 .build()
             )
+        assert not any(issubclass(w.category, ConfigWarning) for w in caught)
         assert cfg.export.otlp_enabled is True
         assert cfg.export.otlp_endpoint == "http://collector:4318"
 
