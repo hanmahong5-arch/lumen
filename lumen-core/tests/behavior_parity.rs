@@ -10,7 +10,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use lumen_core::cost::{trace_cost, CostTracker};
+use lumen_core::cost::CostTracker;
 use lumen_core::replay::ReplayEngine;
 use lumen_core::trace_types::AgentTrace;
 use serde::Deserialize;
@@ -82,13 +82,6 @@ fn cost_and_replay_match_shared_expectations() {
             .unwrap_or_else(|| panic!("missing expectation for {name}"));
         assert_eq!(trace.trace_id, exp.trace_id);
 
-        let cost = trace_cost(&trace);
-        assert!(
-            (cost - exp.cost_usd).abs() < 1e-9,
-            "{name}: cost {cost} != {}",
-            exp.cost_usd
-        );
-
         let dir = std::env::temp_dir().join(format!(
             "lumen_parity_{name}_{}",
             std::process::id()
@@ -97,6 +90,7 @@ fn cost_and_replay_match_shared_expectations() {
         fs::create_dir_all(&dir).unwrap();
         materialize(&dir, &body, &trace.trace_id);
 
+        // CostTracker is the public surface (trace_cost is crate-private).
         let report = CostTracker::new(&dir).report(0).unwrap();
         assert_eq!(report.total_runs, 1, "{name}");
         assert!(
