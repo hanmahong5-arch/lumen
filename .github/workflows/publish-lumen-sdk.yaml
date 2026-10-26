@@ -1,5 +1,12 @@
 name: Publish lumen-sdk to PyPI
 
+# Trusted Publishing (OIDC) — one-time setup on https://pypi.org :
+#   Pending publisher → Project: lumen-ai
+#   Owner: hanmahong5-arch  Repo: lumen
+#   Workflow: publish-lumen-sdk.yaml  Environment: pypi
+# See docs/RELEASE.md. Do not cut a shared vX.Y.Z tag until that is configured
+# and lumen-sdk/pyproject.toml version matches the tag.
+
 on:
   push:
     tags:
@@ -7,9 +14,14 @@ on:
       - "v[0-9]+.[0-9]+.[0-9]+"
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    environment: pypi
     defaults:
       run:
         working-directory: lumen-sdk
@@ -34,8 +46,9 @@ jobs:
       - name: Check distribution metadata
         run: twine check dist/*
 
-      - name: Upload to PyPI
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: twine upload dist/*
+      # workflow_dispatch is build+check only — never upload without a tag.
+      - name: Publish to PyPI
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: lumen-sdk/dist

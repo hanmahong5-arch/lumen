@@ -3,7 +3,7 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/hanmahong5-arch/lumen/main/docs/install-cli.sh | bash
-#   LUMEN_VERSION=lumen-cli-v0.3.0 bash docs/install-cli.sh
+#   LUMEN_VERSION=lumen-cli-v0.3.1 bash docs/install-cli.sh
 #   PREFIX=~/.local/bin bash docs/install-cli.sh
 #
 # Do NOT `cargo install lumen-cli` — that crates.io name is an unrelated project.
@@ -11,8 +11,39 @@
 set -euo pipefail
 
 REPO="${LUMEN_REPO:-hanmahong5-arch/lumen}"
-VERSION="${LUMEN_VERSION:-lumen-cli-v0.3.0}"
 PREFIX="${PREFIX:-$HOME/.local/bin}"
+
+resolve_version() {
+  if [ -n "${LUMEN_VERSION:-}" ]; then
+    printf '%s\n' "$LUMEN_VERSION"
+    return
+  fi
+
+  # Prefer GitHub "latest" when it is a CLI tag; else first lumen-cli-v* in the list.
+  local api="https://api.github.com/repos/${REPO}/releases"
+  local tag=""
+  local body=""
+
+  if body="$(curl -fsSL "${api}/latest" 2>/dev/null || true)" && [ -n "$body" ]; then
+    tag="$(printf '%s' "$body" | tr ',' '\n' | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+    case "$tag" in
+      lumen-cli-v*) printf '%s\n' "$tag"; return ;;
+    esac
+  fi
+
+  if body="$(curl -fsSL "${api}?per_page=30" 2>/dev/null || true)" && [ -n "$body" ]; then
+    tag="$(printf '%s' "$body" | tr ',' '\n' | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\(lumen-cli-v[^"]*\)".*/\1/p' | head -1)"
+    if [ -n "$tag" ]; then
+      printf '%s\n' "$tag"
+      return
+    fi
+  fi
+
+  # Last-known good pin if the API is unreachable (offline / rate-limited).
+  printf '%s\n' "lumen-cli-v0.3.0"
+}
+
+VERSION="$(resolve_version)"
 BASE="https://github.com/${REPO}/releases/download/${VERSION}"
 
 uname_s="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -23,8 +54,8 @@ case "${uname_s}-${uname_m}" in
   darwin-arm64|darwin-aarch64) asset="lumen-aarch64-apple-darwin" ;;
   darwin-x86_64)             asset="lumen-x86_64-apple-darwin" ;;
   mingw*|msys*|cygwin*)
-    echo "error: use the Windows asset lumen-x86_64-pc-windows-msvc.exe from ${BASE}/" >&2
-    echo "  or run this script inside WSL." >&2
+    echo "error: on Windows use docs/install-cli.ps1 (PowerShell), or WSL." >&2
+    echo "  Asset: ${BASE}/lumen-x86_64-pc-windows-msvc.exe" >&2
     exit 1
     ;;
   *)

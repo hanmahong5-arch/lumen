@@ -23,9 +23,16 @@ of `2b-svc-kova` (vendored AgentTrace, not a path dependency).
 - CrewAI / AutoGen / `pytest-lumen` / PyPI publish (until release gate exists)
 - OTLP protobuf / gRPC (HTTP JSON is enough for collectors today)
 
+## Install tax (in progress)
+
+- CLI: `docs/install-cli.sh` / `install-cli.ps1` resolve latest `lumen-cli-v*`;
+  cut tags per [RELEASE.md](../RELEASE.md).
+- PyPI: Trusted Publishing workflow ready; **blocked on one-time pypi.org
+  pending publisher** + first `lumen-sdk-v*` tag (SDK still install-from-git).
+
 ## Next candidates (pick one per cycle)
 
-1. **PyPI + GitHub Release binaries** — install tax → 0 (still the largest funnel gap)
+1. **First PyPI cut** — finish Trusted Publisher setup, tag `lumen-sdk-v*`
 2. **Forge default embed** — lifecycle screen non-skippable when `FORGE_LUMEN_BIN` set
 3. **Step-shape replay alignment** — Python vs Rust step grouping still differs on some fixtures
 4. **Docs/demo polish only** — keep surface honest as features land

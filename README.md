@@ -42,8 +42,11 @@ name is unrelated).
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hanmahong5-arch/lumen/main/docs/install-cli.sh | bash
 export PATH="$HOME/.local/bin:$PATH"
-lumen --version   # -> lumen 0.3.0
+lumen --version
 ```
+
+Windows: `irm https://raw.githubusercontent.com/hanmahong5-arch/lumen/main/docs/install-cli.ps1 | iex`
+(see [docs/INSTALL.md](docs/INSTALL.md)).
 
 **2. See a lifecycle in one command** (offline sample — no Kova, no API key):
 
@@ -73,7 +76,7 @@ Crash mid-run with LangGraph? Keep the same `thread_id` and print
 `LumenCheckpointer(...).resume_hint(thread_id)` — full ritual in [docs/RESUME.md](docs/RESUME.md).
 
 Have a live Kova? `lumen demo --live` (or `--kova-url`) runs a real agent instead of the sample.
-Full install options (Windows binary, source build): [docs/INSTALL.md](docs/INSTALL.md).
+Full install / release: [docs/INSTALL.md](docs/INSTALL.md) · [docs/RELEASE.md](docs/RELEASE.md).
 
 ## Architecture
 
