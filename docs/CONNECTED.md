@@ -16,19 +16,35 @@ Lumen **Core** works offline. This runbook unlocks the **Connected** layer
 export LUMEN_KOVA_URL=http://localhost:3010
 export LUMEN_KOVA_API_KEY=sk-kova-…   # or KOVA_API_KEY
 
-# 2. Pull a recent run (add --deep for full lifecycle sidecars)
+# 2. Live UI — Flow / Terminal / advisory unlock; traces auto-sync from Kova
+#    every 5s into ./traces (UI refresh is also 4s). No separate pull needed.
+lumen dashboard --kova-url "$LUMEN_KOVA_URL" --api-key "$LUMEN_KOVA_API_KEY"
+#    tune: --sync-interval 2   ·  --sync-deep   ·  --no-sync
+
+# 3. Headless live sync (no UI) — same pull loop
+lumen pull --kova-url "$LUMEN_KOVA_URL" --api-key "$LUMEN_KOVA_API_KEY" --watch
+#    one-shot + sidecars for offline export:
 lumen pull --kova-url "$LUMEN_KOVA_URL" --api-key "$LUMEN_KOVA_API_KEY" --deep
 
-# 3. Shareable incident artifact
+# 4. Shareable incident artifact
 lumen export <run-id>                  # opens *-lifecycle.html
-
-# 4. Live UI — Flow / Terminal / advisory unlock when Kova is configured
-lumen dashboard --kova-url "$LUMEN_KOVA_URL" --api-key "$LUMEN_KOVA_API_KEY"
 
 # 5. Optional Metrics tab
 lumen dashboard --kova-url "$LUMEN_KOVA_URL" --api-key "$LUMEN_KOVA_API_KEY" \
   --netdata-url http://localhost:19999
 ```
+
+## What is “live” today
+
+| Surface | Mechanism | Latency |
+|---|---|---|
+| Traces timeline | Background pull → disk → `/api/traces` (4s UI poll) | ~sync interval (default 5s) |
+| Terminal / Flow / advisory | Direct REST proxy to kova-rest | request RTT |
+| Metrics / ML anomaly | Netdata scrape of kova `/metrics` | Netdata + 4s UI poll |
+
+Kova does not expose a trace SSE/WebSocket today; Lumen’s Connected path is
+**pull-based**. Tightening `--sync-interval` (e.g. 2) is the supported way to
+feel more real-time without changing Kova.
 
 ## Forge embed
 

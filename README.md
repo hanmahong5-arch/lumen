@@ -138,9 +138,9 @@ from cwd) → `LUMEN_*` environment variables → explicit builder overrides (`l
 lumen replay <trace-id> [--from-step N]                 # replay a run, zero LLM cost
 lumen cost --last 24h [--format json]                    # cost report + per-run outliers
 lumen traces [--trace-dir ./traces]                       # list agent runs
-lumen dashboard [--netdata-url …] [--kova-url … --api-key …]  # web UI
+lumen dashboard [--kova-url …] [--sync-interval 5] [--netdata-url …]  # UI; Connected auto-pulls
 lumen metrics --last 10m [--format json]                  # headless Netdata snapshot
-lumen pull --kova-url <url> [--deep]                       # fetch traces from a live Kova
+lumen pull --kova-url <url> [--deep] [--watch]              # fetch traces; --watch = live sync
 lumen export <run> [--trace-dir …] [--kova-url …]          # one run -> self-contained .html
 lumen kova "<verb>" [--kova-url …] [--yes]                 # one-shot Kova control command
 lumen demo [--live] [--kova-url …] [--kova-bin …]            # offline sample; --live = real run
