@@ -38,8 +38,11 @@ CLI 走 GitHub Release 二进制；Python SDK 暂从本仓库安装（**不要**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hanmahong5-arch/lumen/main/docs/install-cli.sh | bash
 export PATH="$HOME/.local/bin:$PATH"
-lumen --version   # -> lumen 0.3.0
+lumen --version
 ```
+
+Windows：`irm https://raw.githubusercontent.com/hanmahong5-arch/lumen/main/docs/install-cli.ps1 | iex`
+（详见 [docs/INSTALL.md](docs/INSTALL.md)）。
 
 **2. 一条命令看清生命周期**（离线样例 —— 无需 Kova / API key）：
 
@@ -68,8 +71,8 @@ with trace("research-task") as t:
 LangGraph 跑到一半崩了？保持同一 `thread_id`，打印
 `LumenCheckpointer(...).resume_hint(thread_id)` —— 完整仪式见 [docs/RESUME.md](docs/RESUME.md)。
 
-有在线 Kova 时可用 `lumen demo --live`（或 `--kova-url`）跑真实 agent。完整安装（Windows 二进制、
-源码构建）见 [docs/INSTALL.md](docs/INSTALL.md)。
+有在线 Kova 时可用 `lumen demo --live`（或 `--kova-url`）跑真实 agent。完整安装 / 发版：
+[docs/INSTALL.md](docs/INSTALL.md) · [docs/RELEASE.md](docs/RELEASE.md)。
 
 ## 架构
 
