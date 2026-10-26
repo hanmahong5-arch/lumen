@@ -11,6 +11,7 @@
 //!   - `/api/anomalies`        — ML anomaly-rate for the kova charts + node.
 //!   - `/api/alarms`           — proxy of Netdata `/api/v1/alarms`.
 //!   - `/api/kova-status`      — `{configured, reachable}` for the Terminal tab.
+//!   - `/api/sync-status`      — background Kova→disk pull status (when Connected).
 //!   - `POST /api/console`     — run one whitelisted kova control verb (the
 //!     Terminal tab); the kova API key is held here, server-side, and never
 //!     reaches the browser.
@@ -21,8 +22,9 @@
 
 use std::io::{Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
-use std::sync::Arc;
-use std::time::Duration;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
 
@@ -34,6 +36,58 @@ use crate::netdata::{
     HttpNetdataClient, KOVA_CHARTS, NODE_ANOMALY_CHART, NetdataClient, NetdataStatus, clamp_points,
     valid_chart, valid_relative,
 };
+use crate::pull::{self, HttpFetcher};
+
+/// Live status of the background Kova → `trace_dir` sync loop.
+#[derive(Debug, Clone)]
+pub struct SyncSnapshot {
+    pub enabled: bool,
+    pub interval_secs: u64,
+    pub last_ok_unix_ms: Option<u64>,
+    pub last_error: Option<String>,
+    pub last_written: usize,
+    pub last_listed: usize,
+}
+
+impl Default for SyncSnapshot {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: pull::DEFAULT_SYNC_INTERVAL_SECS,
+            last_ok_unix_ms: None,
+            last_error: None,
+            last_written: 0,
+            last_listed: 0,
+        }
+    }
+}
+
+/// Options for the Connected-mode background pull.
+#[derive(Debug, Clone)]
+pub struct SyncConfig {
+    pub enabled: bool,
+    pub interval_secs: u64,
+    pub limit: usize,
+    pub deep: bool,
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_secs: pull::DEFAULT_SYNC_INTERVAL_SECS,
+            limit: pull::DEFAULT_PULL_LIMIT,
+            deep: false,
+        }
+    }
+}
+
+fn unix_now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
 
 /// Per-connection read timeout. Each connection is handled on its own thread, so
 /// a connection that opens but never sends a request frees its thread instead of
@@ -150,6 +204,10 @@ const CT_TEXT: &str = "text/plain; charset=utf-8";
 /// `kova` is `(base_url, api_key)`; the key is attached server-side to each
 /// control request and never reaches the browser.
 ///
+/// When `kova` is set and `sync.enabled`, a background thread periodically
+/// pulls traces into `trace_dir` so the 4s UI refresh sees live Kova runs
+/// without a separate `lumen pull`.
+///
 /// Blocks forever (until Ctrl-C). Binds loopback only — this is a local dev
 /// tool, never an exposed service.
 pub fn serve(
@@ -157,6 +215,7 @@ pub fn serve(
     trace_dir: &str,
     netdata_url: Option<String>,
     kova: Option<(String, Option<String>)>,
+    sync: SyncConfig,
 ) {
     let addr = format!("127.0.0.1:{port}");
     let listener = match TcpListener::bind(&addr) {
@@ -181,6 +240,25 @@ pub fn serve(
         .as_ref()
         .map(|(url, key)| Arc::new(HttpKovaClient::new(url, key.clone())));
 
+    let sync_enabled = sync.enabled && kova.is_some();
+    let sync_state = Arc::new(Mutex::new(SyncSnapshot {
+        enabled: sync_enabled,
+        interval_secs: sync.interval_secs.max(1),
+        ..SyncSnapshot::default()
+    }));
+
+    if sync_enabled {
+        if let Some((url, key)) = kova.as_ref() {
+            spawn_sync_loop(
+                url.clone(),
+                key.clone(),
+                PathBuf::from(trace_dir),
+                sync.clone(),
+                Arc::clone(&sync_state),
+            );
+        }
+    }
+
     let url = format!("http://localhost:{port}");
     println!("\x1b[36m🌐 Lumen Dashboard\x1b[0m");
     println!("  \x1b[1m{url}\x1b[0m");
@@ -190,8 +268,18 @@ pub fn serve(
         None => println!("  netdata:   (unset — Metrics tab disabled; set LUMEN_NETDATA_URL)"),
     }
     match kova.as_ref() {
-        Some((u, _)) => println!("  kova:      {u}"),
-        None => println!("  kova:      (unset — Terminal tab disabled; set LUMEN_KOVA_URL)"),
+        Some((u, _)) => {
+            println!("  kova:      {u}");
+            if sync_enabled {
+                println!(
+                    "  sync:      every {}s → {trace_dir} (disable with --no-sync)",
+                    sync.interval_secs.max(1)
+                );
+            } else {
+                println!("  sync:      off (--no-sync); run `lumen pull --watch` separately");
+            }
+        }
+        None => println!("  kova:      (unset — Terminal/sync disabled; set LUMEN_KOVA_URL)"),
     }
     println!("  press Ctrl-C to stop");
     open_browser(&url);
@@ -206,12 +294,51 @@ pub fn serve(
         let netdata = netdata.clone();
         let kova_client = kova_client.clone();
         let allowed = allowed.clone();
+        let sync_state = Arc::clone(&sync_state);
         std::thread::spawn(move || {
             let nd = netdata.as_deref().map(|c| c as &dyn NetdataClient);
             let kv = kova_client.as_deref().map(|c| c as &dyn KovaControlClient);
-            handle(stream, &trace_dir, nd, kv, &allowed);
+            handle(stream, &trace_dir, nd, kv, &allowed, &sync_state);
         });
     }
+}
+
+fn spawn_sync_loop(
+    kova_url: String,
+    api_key: Option<String>,
+    trace_dir: PathBuf,
+    sync: SyncConfig,
+    state: Arc<Mutex<SyncSnapshot>>,
+) {
+    std::thread::Builder::new()
+        .name("lumen-kova-sync".into())
+        .spawn(move || {
+            let fetcher = HttpFetcher::new(&kova_url, api_key);
+            let interval = Duration::from_secs(sync.interval_secs.max(1));
+            let limit = sync.limit.min(pull::MAX_PULL_LIMIT);
+            loop {
+                let result = if sync.deep {
+                    pull::pull_into_deep_quiet(&fetcher, &trace_dir, limit)
+                } else {
+                    pull::pull_into_quiet(&fetcher, &trace_dir, limit)
+                };
+                if let Ok(mut snap) = state.lock() {
+                    match result {
+                        Ok(summary) => {
+                            snap.last_ok_unix_ms = Some(unix_now_ms());
+                            snap.last_error = None;
+                            snap.last_written = summary.written;
+                            snap.last_listed = summary.listed;
+                        }
+                        Err(e) => {
+                            snap.last_error = Some(e.to_string());
+                        }
+                    }
+                }
+                std::thread::sleep(interval);
+            }
+        })
+        .ok();
 }
 
 /// Handle one connection: parse the request (line + headers + bounded body),
@@ -222,6 +349,7 @@ fn handle(
     netdata: Option<&dyn NetdataClient>,
     kova: Option<&dyn KovaControlClient>,
     allowed: &[String],
+    sync: &Arc<Mutex<SyncSnapshot>>,
 ) {
     let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
     let Some((method, raw_path, body, origin)) = read_request(&mut stream) else {
@@ -239,9 +367,32 @@ fn handle(
         );
         return;
     }
+
+    let (path, _query) = split_path_query(&raw_path);
+    if method == "GET" && path == "/api/sync-status" {
+        let (status, content_type, resp_body) = sync_status_response(sync);
+        let _ = write_response(&mut stream, status, content_type, &resp_body);
+        return;
+    }
+
     let (status, content_type, resp_body) =
         route(&method, &raw_path, &body, trace_dir, netdata, kova);
     let _ = write_response(&mut stream, status, content_type, &resp_body);
+}
+
+fn sync_status_response(sync: &Arc<Mutex<SyncSnapshot>>) -> Resp {
+    let snap = sync.lock().map(|g| g.clone()).unwrap_or_default();
+    ok_json(
+        json!({
+            "enabled": snap.enabled,
+            "interval_secs": snap.interval_secs,
+            "last_ok_unix_ms": snap.last_ok_unix_ms,
+            "last_error": snap.last_error,
+            "last_written": snap.last_written,
+            "last_listed": snap.last_listed,
+        })
+        .to_string(),
+    )
 }
 
 /// Parsed request prologue: method, raw target (path+query), declared body

@@ -277,7 +277,8 @@
     <div class="hstat"><div class="v" id="s-cost">—</div><div class="k">cost</div></div>
     <div class="hstat"><div class="v" id="s-tok">—</div><div class="k">tokens</div></div>
     <span id="alarmpill" class="alarmpill" style="display:none" title="active Netdata alarms" onclick="setView('metrics')"></span>
-    <div class="live" id="live" title="auto-refresh every 4s"><span class="pulse"></span><span id="live-t">live</span></div>
+    <div class="live" id="live" title="UI auto-refresh every 4s (click to pause)"><span class="pulse"></span><span id="live-t">live</span></div>
+    <div class="live" id="sync" style="display:none" title="Kova→disk background sync"><span class="pulse"></span><span id="sync-t">sync</span></div>
   </div>
 </header>
 
@@ -1386,9 +1387,31 @@ function showTip(ev, enc){ const p=JSON.parse(decodeURIComponent(enc)); tip.inne
 function hideTip(){ tip.style.display="none"; }
 document.getElementById("live").addEventListener("click", ()=>{ LIVE=!LIVE; const e=document.getElementById("live"); e.classList.toggle("off",!LIVE); document.getElementById("live-t").textContent=LIVE?"live":"paused"; });
 
+async function loadSyncStatus(){
+  try {
+    const s = await (await fetch("/api/sync-status")).json();
+    const el = document.getElementById("sync");
+    const t = document.getElementById("sync-t");
+    if (!s || !s.enabled) { el.style.display = "none"; return; }
+    el.style.display = "";
+    if (s.last_error) {
+      el.classList.add("off");
+      t.textContent = "sync err";
+      el.title = String(s.last_error);
+      return;
+    }
+    el.classList.remove("off");
+    const ago = s.last_ok_unix_ms ? Math.max(0, Math.round((Date.now() - s.last_ok_unix_ms)/1000)) : null;
+    t.textContent = ago == null ? "sync…" : ("sync "+ago+"s");
+    el.title = "Kova→disk every "+(s.interval_secs||"?")+"s · last wrote "+(s.last_written||0)+" / listed "+(s.last_listed||0);
+  } catch (_) { /* ignore */ }
+}
+
 document.getElementById("root").innerHTML = skeletonHtml("overview");
 load();
+loadSyncStatus();
 setInterval(()=>{ if(LIVE) load(); }, 4000);
+setInterval(loadSyncStatus, 4000);
 loadAdvisories();
 setInterval(loadAdvisories, 30000);
 </script>

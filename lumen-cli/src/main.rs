@@ -65,14 +65,24 @@ enum Commands {
         /// Falls back to LUMEN_NETDATA_URL. Unset ⇒ Metrics tab shows a config card.
         #[arg(long)]
         netdata_url: Option<String>,
-        /// Kova base URL for the Terminal tab (e.g. http://localhost:3010).
-        /// Falls back to LUMEN_KOVA_URL. Unset ⇒ Terminal tab shows a config card.
+        /// Kova base URL for the Terminal tab + background trace sync
+        /// (e.g. http://localhost:3010). Falls back to LUMEN_KOVA_URL.
+        /// Unset ⇒ Terminal tab / sync show config cards.
         #[arg(long)]
         kova_url: Option<String>,
         /// Kova API key for the Terminal tab (`X-API-Key`), held server-side.
         /// Falls back to LUMEN_KOVA_API_KEY then KOVA_API_KEY.
         #[arg(long)]
         api_key: Option<String>,
+        /// Disable background Kova→disk pull when `--kova-url` is set.
+        #[arg(long)]
+        no_sync: bool,
+        /// Seconds between background pulls (default 5).
+        #[arg(long, default_value_t = pull::DEFAULT_SYNC_INTERVAL_SECS)]
+        sync_interval: u64,
+        /// Also pull lifecycle sidecars on each background sync (heavier).
+        #[arg(long)]
+        sync_deep: bool,
     },
     /// Snapshot kova metrics + ML anomaly rates from Netdata (headless).
     ///
@@ -112,6 +122,12 @@ enum Commands {
         /// so `lumen export` renders the full lifecycle offline.
         #[arg(long)]
         deep: bool,
+        /// Keep pulling on an interval (headless live sync). Ctrl-C to stop.
+        #[arg(long)]
+        watch: bool,
+        /// Seconds between `--watch` pulls (default 5).
+        #[arg(long, default_value_t = pull::DEFAULT_SYNC_INTERVAL_SECS)]
+        interval: u64,
     },
     /// Export one run as a self-contained, offline lifecycle HTML.
     ///
@@ -239,9 +255,24 @@ fn main() -> std::process::ExitCode {
             netdata_url,
             kova_url,
             api_key,
+            no_sync,
+            sync_interval,
+            sync_deep,
         } => {
             let kova = resolve_kova_url(kova_url).map(|u| (u, resolve_api_key(api_key)));
-            dashboard::serve(port, &trace_dir, resolve_netdata_url(netdata_url), kova);
+            let sync = dashboard::SyncConfig {
+                enabled: !no_sync,
+                interval_secs: sync_interval.max(1),
+                limit: pull::DEFAULT_PULL_LIMIT,
+                deep: sync_deep,
+            };
+            dashboard::serve(
+                port,
+                &trace_dir,
+                resolve_netdata_url(netdata_url),
+                kova,
+                sync,
+            );
         }
         Commands::Metrics {
             netdata_url,
@@ -254,7 +285,19 @@ fn main() -> std::process::ExitCode {
             trace_dir,
             limit,
             deep,
-        } => return cmd_pull(&kova_url, api_key, &trace_dir, limit, deep),
+            watch,
+            interval,
+        } => {
+            return cmd_pull(
+                &kova_url,
+                api_key,
+                &trace_dir,
+                limit,
+                deep,
+                watch,
+                interval.max(1),
+            );
+        }
         Commands::Export {
             run_id,
             output,
@@ -405,6 +448,8 @@ fn cmd_pull(
     trace_dir: &str,
     limit: usize,
     deep: bool,
+    watch: bool,
+    interval_secs: u64,
 ) -> std::process::ExitCode {
     let limit = limit.min(pull::MAX_PULL_LIMIT);
     let key = resolve_api_key(api_key);
@@ -416,6 +461,37 @@ fn cmd_pull(
     } else {
         ""
     };
+
+    if watch {
+        println!(
+            "\x1b[36m⇣ Watching Kova at {kova_url}{mode} — every {interval_secs}s → {}\x1b[0m",
+            dir.display()
+        );
+        println!("  press Ctrl-C to stop");
+        loop {
+            let result = if deep {
+                pull::pull_into_deep_quiet(&fetcher, dir, limit)
+            } else {
+                pull::pull_into_quiet(&fetcher, dir, limit)
+            };
+            match result {
+                Ok(summary) => {
+                    let ts = chrono_like_now();
+                    if summary.listed == 0 {
+                        println!("  [{ts}] no traces yet");
+                    } else {
+                        println!(
+                            "  [{ts}] \x1b[32m{} written\x1b[0m / {} listed",
+                            summary.written, summary.listed
+                        );
+                    }
+                }
+                Err(e) => eprintln!("  \x1b[31m[{}] Error: {e}\x1b[0m", chrono_like_now()),
+            }
+            std::thread::sleep(std::time::Duration::from_secs(interval_secs));
+        }
+    }
+
     println!("\x1b[36m⇣ Pulling up to {limit} traces from {kova_url}{mode}\x1b[0m");
     let result = if deep {
         pull::pull_into_deep(&fetcher, dir, limit)
@@ -460,6 +536,19 @@ fn cmd_pull(
             std::process::ExitCode::FAILURE
         }
     }
+}
+
+/// Compact local clock for `--watch` log lines (no chrono dependency).
+fn chrono_like_now() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let h = (secs / 3600) % 24;
+    let m = (secs / 60) % 60;
+    let s = secs % 60;
+    format!("{h:02}:{m:02}:{s:02}Z")
 }
 
 /// `lumen export <run>` — assemble one run's lifecycle and write a

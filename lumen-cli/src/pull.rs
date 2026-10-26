@@ -55,6 +55,8 @@ pub struct PullSummary {
 pub const DEFAULT_PULL_LIMIT: usize = 200;
 /// Maximum value accepted for `--limit`.
 pub const MAX_PULL_LIMIT: usize = 10_000;
+/// Default interval (seconds) for `lumen pull --watch` and dashboard auto-sync.
+pub const DEFAULT_SYNC_INTERVAL_SECS: u64 = 5;
 
 /// Abstraction over fetching traces from Kova — the single network seam.
 ///
@@ -201,7 +203,17 @@ pub fn pull_into(
     trace_dir: &Path,
     limit: usize,
 ) -> Result<PullSummary, PullError> {
-    pull_into_inner(fetcher, trace_dir, limit, false)
+    pull_into_inner(fetcher, trace_dir, limit, false, false)
+}
+
+/// Like [`pull_into`] but suppresses per-trace progress lines (for `--watch`
+/// / dashboard background sync).
+pub fn pull_into_quiet(
+    fetcher: &dyn TraceFetcher,
+    trace_dir: &Path,
+    limit: usize,
+) -> Result<PullSummary, PullError> {
+    pull_into_inner(fetcher, trace_dir, limit, false, true)
 }
 
 /// Like [`pull_into`] but also fetches the deep lifecycle sidecars for each
@@ -220,7 +232,16 @@ pub fn pull_into_deep(
     trace_dir: &Path,
     limit: usize,
 ) -> Result<PullSummary, PullError> {
-    pull_into_inner(fetcher, trace_dir, limit, true)
+    pull_into_inner(fetcher, trace_dir, limit, true, false)
+}
+
+/// Quiet deep pull (dashboard / watch).
+pub fn pull_into_deep_quiet(
+    fetcher: &dyn TraceFetcher,
+    trace_dir: &Path,
+    limit: usize,
+) -> Result<PullSummary, PullError> {
+    pull_into_inner(fetcher, trace_dir, limit, true, true)
 }
 
 fn pull_into_inner(
@@ -228,6 +249,7 @@ fn pull_into_inner(
     trace_dir: &Path,
     limit: usize,
     deep: bool,
+    quiet: bool,
 ) -> Result<PullSummary, PullError> {
     let ids = fetcher.list_trace_ids(limit).map_err(PullError::List)?;
 
@@ -245,7 +267,9 @@ fn pull_into_inner(
 
     let total = ids.len();
     for (idx, id) in ids.into_iter().enumerate() {
-        eprintln!("  [{}/{}] {}", idx + 1, total, id);
+        if !quiet {
+            eprintln!("  [{}/{}] {}", idx + 1, total, id);
+        }
         match fetch_and_write_one(fetcher, trace_dir, &id) {
             Ok(body) => {
                 summary.written += 1;
@@ -254,7 +278,9 @@ fn pull_into_inner(
                 }
             }
             Err(msg) => {
-                eprintln!("\x1b[33mwarning: skipping trace {id}: {msg}\x1b[0m");
+                if !quiet {
+                    eprintln!("\x1b[33mwarning: skipping trace {id}: {msg}\x1b[0m");
+                }
                 summary.skipped.push(id);
             }
         }
@@ -627,6 +653,16 @@ mod tests {
                     .is_ok()
             );
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pull_quiet_still_writes() {
+        let dir = tmp_dir("quiet");
+        let fetcher = StubFetcher::new(&["q1"]).with_trace("q1", &trace_json("q1"));
+        let summary = pull_into_quiet(&fetcher, &dir, DEFAULT_PULL_LIMIT).unwrap();
+        assert_eq!(summary.written, 1);
+        assert!(dir.join("q1.json").is_file());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

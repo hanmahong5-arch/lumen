@@ -30,11 +30,17 @@ of `2b-svc-kova` (vendored AgentTrace, not a path dependency).
 - PyPI: Trusted Publishing workflow ready; **blocked on one-time pypi.org
   pending publisher** + first `lumen-sdk-v*` tag (SDK still install-from-git).
 
+## Connected live sync
+
+Dashboard with `--kova-url` background-pulls traces every 5s (override
+`--sync-interval` / `--no-sync`). Headless: `lumen pull --watch`. Kova has no
+trace SSE yet — pull-based is the honest real-time path.
+
 ## Next candidates (pick one per cycle)
 
 1. **First PyPI cut** — finish Trusted Publisher setup, tag `lumen-sdk-v*`
 2. **Forge default embed** — lifecycle screen non-skippable when `FORGE_LUMEN_BIN` set
 3. **Step-shape replay alignment** — Python vs Rust step grouping still differs on some fixtures
-4. **Docs/demo polish only** — keep surface honest as features land
+4. **Kova-side trace push/SSE** — only if pull interval is proven insufficient
 
 Rule: measure progress by install → 5-minute incident HTML → shareable artifact, not feature-list length.
