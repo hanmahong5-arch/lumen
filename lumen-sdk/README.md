@@ -1,11 +1,11 @@
 # Lumen
 
-> Illuminate your AI agents. Never lose a run. Never burn tokens blindly.
+> The black box for agent failures and spend — open a run and see which step
+> burned money, which tool was refused, and how to continue after a crash.
 
-**Developer tool for AI agent reliability and observability.** For anyone building
-agents with LangGraph / CrewAI / AutoGen / custom Python who needs: visibility
-(where money goes), debugging (what happened at step 7/12), reliability (resume
-after crash without re-running), budget control (stop before credits burn).
+**Developer tool for AI agent reliability and observability.** LangGraph is the
+one fully supported integration today (CrewAI / AutoGen are not built yet).
+Alpha: core tracing, cost, and replay are implemented and tested.
 
 ## Install
 
@@ -81,18 +81,20 @@ for step in trace.steps:
 ## CLI
 
 ```bash
-lumen demo                           # One command → real run → opens its lifecycle .html
+lumen demo                           # Offline sample lifecycle HTML (no Kova / API key)
+lumen demo --live                    # Real agent run (needs Kova + KOVA_LLM_API_KEY)
 lumen demo --kova-url http://localhost:3010   # …against a Kova you already run
 lumen replay <trace-id>              # Replay an agent run (zero cost)
 lumen replay <id> --from-step 7      # Replay from a specific step
 lumen cost --last 24h                # Cost report (flags per-run cost outliers)
 lumen cost --last 7d --format json   # JSON output
+lumen cost --last 24h --format md    # Markdown one-liner suitable for pasting
 lumen traces                         # List all agent runs
 lumen traces --trace-dir ./my-traces # Custom trace directory
-lumen dashboard                      # Web UI: trace timeline + Metrics + Terminal tabs
+lumen dashboard                      # Web UI: Core timeline (Connected tabs need Kova/Netdata)
 lumen dashboard --netdata-url http://localhost:19999   # + live metrics/ML anomaly
-lumen dashboard --kova-url http://localhost:3010 --api-key sk-kova-…  # + Terminal tab
-lumen metrics --last 10m             # Headless kova metrics + ML anomaly snapshot
+lumen dashboard --kova-url http://localhost:3010 --api-key sk-kova-…  # + Terminal / Flow
+lumen metrics --last 10m             # Headless Netdata metrics + ML anomaly snapshot
 lumen kova "agents"                  # Headless one-shot of a kova control verb
 lumen kova "agent foo delete" --yes  # …destructive verbs need --yes
 lumen pull --kova-url http://localhost:3010          # Pull trace JSON from a live Kova
@@ -101,10 +103,11 @@ lumen export <run> --trace-dir ./traces              # One run → self-containe
 lumen export <run> --kova-url http://localhost:3010  # …fetch that run live first, then export
 ```
 
-**First look?** Just `lumen demo`. It spins up an ephemeral Kova, runs one real agent, and opens the
-lifecycle `.html` — no setup, no pipeline to learn. (Needs `KOVA_LLM_API_KEY`; the ephemeral path also
-needs a `kova-rest` binary on `PATH`/`KOVA_REST_BIN`, or point `--kova-url` at a Kova you already run.)
-The `pull`/`traces`/`cost`/`replay`/`export` verbs below are the power-user pipeline for after that.
+**First look?** `lumen demo` writes a sample lifecycle `.html` with zero setup.
+Have a live Kova? use `--live` / `--kova-url` (needs `KOVA_LLM_API_KEY`, and for the
+ephemeral path a `kova-rest` on `PATH`/`KOVA_REST_BIN`). Crash mid-run with LangGraph?
+see [docs/RESUME.md](../docs/RESUME.md). Connected (Kova/Netdata) golden path:
+[docs/CONNECTED.md](../docs/CONNECTED.md).
 
 ## Lifecycle view & export
 
@@ -209,18 +212,18 @@ See `2b-svc-kova/doc/coord/contracts.md` (Lumen → kova-rest control-plane) for
 Estimates costs from token usage even when the provider doesn't report cost directly.
 Supports 30+ models incl. Claude, GPT-4o, Gemini, Llama, Mistral, DeepSeek.
 
-## v0.2 Status
+## Status (honest)
 
-Shipped ✅: `instrument()` one-line auto-detection · OpenAI + Anthropic SDK auto-instrumentation ·
-LangGraph CheckpointSaver + Tracer · `with trace(...)` / `async with atrace(...)` / `@traced_fn` ·
-cost tracking (Python + CLI) · replay (Python + CLI) · pricing estimation (30+ models) ·
-budget tracker with kill-on-exceeded · cost anomaly detection · trace redaction (PII / custom
-patterns) · trace diff & compare · TraceQuery (filter / aggregate) · runtime metrics
-(Prometheus-style) · hierarchical config (`lumen.toml` / env / builder) · web dashboard
-(trace timeline + Netdata Metrics tab + kova-control Terminal tab).
+Shipped ✅: `instrument()` · OpenAI + Anthropic auto-instrumentation · LangGraph
+`LumenCheckpointer` + `LumenTracer` (+ `resume_hint`) · `with trace(...)` /
+`async with atrace(...)` / `@traced_fn` · cost + replay (Python ↔ Rust parity fixtures) ·
+pricing (30+ models) · budget / anomaly · redaction · TraceQuery · OTLP/HTTP JSON export
+(`LUMEN_OTLP_ENABLED` + `LUMEN_OTLP_ENDPOINT`) · web dashboard (`lumen dashboard`) ·
+offline `lumen demo` + Connected Kova/Netdata path.
 
-⏳ v0.3: `lumen.Agent.run()` direct execution · web dashboard (`lumen up`) · `pytest-lumen` plugin.
-⏳ Planned: CrewAI / AutoGen integration.
+Not shipped (and not stubbed as working): a direct `lumen.Agent.run()` runtime (use
+LangGraph + checkpointer; Kova owns durable WAL agents) · CrewAI / AutoGen ·
+`pytest-lumen` · PyPI `lumen-ai` publish (install from this repo).
 
 ## Architecture
 
