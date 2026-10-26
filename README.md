@@ -124,8 +124,10 @@ from cwd) → `LUMEN_*` environment variables → explicit builder overrides (`l
 | `LUMEN_NETDATA_URL` | — | Dashboard Metrics tab source, e.g. `http://localhost:19999` (`main.rs:333`) |
 | `LUMEN_KOVA_URL` | — | Kova base URL for `pull`/`export`/`kova`/Terminal tab (`main.rs:350`) |
 | `LUMEN_KOVA_API_KEY` / `KOVA_API_KEY` | — | Kova `X-API-Key`, held server-side, never sent to the browser (`main.rs:341-342`) |
-| `KOVA_LLM_API_KEY` | — | Required by `lumen demo`'s agent loop (`demo.rs:109`) |
-| `KOVA_REST_BIN` | — | Path to the `kova-rest` binary for `lumen demo`'s ephemeral path (`demo.rs:143`) |
+| `LUMEN_OTLP_ENABLED` | `false` | Fan out completed traces via OTLP/HTTP JSON (`config.py`) |
+| `LUMEN_OTLP_ENDPOINT` | — | Collector base URL (appends `/v1/traces` if needed) |
+| `KOVA_LLM_API_KEY` | — | Required only by `lumen demo --live` / ephemeral agent loop (`demo.rs`) |
+| `KOVA_REST_BIN` | — | `kova-rest` path for `lumen demo --live` ephemeral spawn (`demo.rs`) |
 
 ## CLI overview
 
@@ -138,7 +140,7 @@ lumen metrics --last 10m [--format json]                  # headless Netdata sna
 lumen pull --kova-url <url> [--deep]                       # fetch traces from a live Kova
 lumen export <run> [--trace-dir …] [--kova-url …]          # one run -> self-contained .html
 lumen kova "<verb>" [--kova-url …] [--yes]                 # one-shot Kova control command
-lumen demo [--kova-url …] [--kova-bin …]                   # zero-setup: run + visualize
+lumen demo [--live] [--kova-url …] [--kova-bin …]            # offline sample; --live = real run
 lumen tour                                                  # assemble a multi-run index.html
 ```
 

@@ -116,8 +116,10 @@ SDK 配置按此顺序解析：硬编码默认值 → `~/.lumen/config.toml` →
 | `LUMEN_NETDATA_URL` | — | 仪表盘 Metrics 标签页数据源，如 `http://localhost:19999` (`main.rs:333`) |
 | `LUMEN_KOVA_URL` | — | `pull`/`export`/`kova`/Terminal 标签页用的 Kova 地址 (`main.rs:350`) |
 | `LUMEN_KOVA_API_KEY` / `KOVA_API_KEY` | — | Kova 的 `X-API-Key`，只留在服务端，绝不下发到浏览器 (`main.rs:341-342`) |
-| `KOVA_LLM_API_KEY` | — | `lumen demo` 的 agent 循环所必需 (`demo.rs:109`) |
-| `KOVA_REST_BIN` | — | `lumen demo` 临时路径用的 `kova-rest` 二进制路径 (`demo.rs:143`) |
+| `LUMEN_OTLP_ENABLED` | `false` | 完成后的 trace 额外经 OTLP/HTTP JSON 导出 (`config.py`) |
+| `LUMEN_OTLP_ENDPOINT` | — | Collector 基址（缺 `/v1/traces` 时自动补） |
+| `KOVA_LLM_API_KEY` | — | 仅 `lumen demo --live` / 临时 agent 循环需要 (`demo.rs`) |
+| `KOVA_REST_BIN` | — | `lumen demo --live` 临时拉起 `kova-rest` 时的二进制路径 (`demo.rs`) |
 
 ## CLI 概览
 
@@ -130,7 +132,7 @@ lumen metrics --last 10m [--format json]                  # 无界面 Netdata �
 lumen pull --kova-url <url> [--deep]                       # 从在线 Kova 拉取 trace
 lumen export <run> [--trace-dir …] [--kova-url …]          # 单次运行 -> 独立 .html
 lumen kova "<verb>" [--kova-url …] [--yes]                 # 一次性 Kova 控制命令
-lumen demo [--kova-url …] [--kova-bin …]                   # 零配置：跑一次并可视化
+lumen demo [--live] [--kova-url …] [--kova-bin …]            # 默认离线样例；--live 才跑真 agent
 lumen tour                                                  # 组装多运行的 index.html
 ```
 
