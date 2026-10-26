@@ -247,16 +247,14 @@ pub fn serve(
         ..SyncSnapshot::default()
     }));
 
-    if sync_enabled {
-        if let Some((url, key)) = kova.as_ref() {
-            spawn_sync_loop(
-                url.clone(),
-                key.clone(),
-                PathBuf::from(trace_dir),
-                sync.clone(),
-                Arc::clone(&sync_state),
-            );
-        }
+    if sync_enabled && let Some((url, key)) = kova.as_ref() {
+        spawn_sync_loop(
+            url.clone(),
+            key.clone(),
+            PathBuf::from(trace_dir),
+            sync.clone(),
+            Arc::clone(&sync_state),
+        );
     }
 
     let url = format!("http://localhost:{port}");
