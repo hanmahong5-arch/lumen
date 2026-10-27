@@ -18,8 +18,8 @@ Do **not** `cargo publish` — `lumen-cli` on crates.io is an unrelated package.
 3. Tag and push:
 
 ```bash
-git tag -a lumen-cli-v0.3.1 -m "lumen-cli 0.3.1"
-git push origin lumen-cli-v0.3.1
+git tag -a lumen-cli-v0.3.2 -m "lumen-cli 0.3.1"
+git push origin lumen-cli-v0.3.2
 ```
 
 4. Wait for the Release workflow matrix (linux / windows / darwin). Confirm

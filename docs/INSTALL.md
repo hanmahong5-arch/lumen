@@ -12,7 +12,7 @@ Release for your machine, verifies `SHA256SUMS`, and installs it.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hanmahong5-arch/lumen/main/docs/install-cli.sh | bash
-# pin a release:  LUMEN_VERSION=lumen-cli-v0.3.1 bash …
+# pin a release:  LUMEN_VERSION=lumen-cli-v0.3.2 bash …
 export PATH="$HOME/.local/bin:$PATH"
 lumen --version
 lumen demo        # opens a sample lifecycle HTML — zero Kova / LLM key needed
@@ -22,7 +22,7 @@ Windows (PowerShell):
 
 ```powershell
 irm https://raw.githubusercontent.com/hanmahong5-arch/lumen/main/docs/install-cli.ps1 | iex
-# pin:  $env:LUMEN_VERSION = 'lumen-cli-v0.3.1'; .\docs\install-cli.ps1
+# pin:  $env:LUMEN_VERSION = 'lumen-cli-v0.3.2'; .\docs\install-cli.ps1
 ```
 
 Default install dir: `%LOCALAPPDATA%\lumen\bin` (override with `$env:PREFIX`).
