@@ -2,7 +2,7 @@
 #
 # Usage (PowerShell):
 #   irm https://raw.githubusercontent.com/hanmahong5-arch/lumen/main/docs/install-cli.ps1 | iex
-#   $env:LUMEN_VERSION = 'lumen-cli-v0.3.1'; .\docs\install-cli.ps1
+#   $env:LUMEN_VERSION = 'lumen-cli-v0.3.2'; .\docs\install-cli.ps1
 #   $env:PREFIX = "$env:LOCALAPPDATA\lumen\bin"; .\docs\install-cli.ps1
 #
 # Do NOT `cargo install lumen-cli` — that crates.io name is an unrelated project.

@@ -3,7 +3,7 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/hanmahong5-arch/lumen/main/docs/install-cli.sh | bash
-#   LUMEN_VERSION=lumen-cli-v0.3.1 bash docs/install-cli.sh
+#   LUMEN_VERSION=lumen-cli-v0.3.2 bash docs/install-cli.sh
 #   PREFIX=~/.local/bin bash docs/install-cli.sh
 #
 # Do NOT `cargo install lumen-cli` — that crates.io name is an unrelated project.

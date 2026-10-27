@@ -34,7 +34,8 @@ of `2b-svc-kova` (vendored AgentTrace, not a path dependency).
 
 Dashboard with `--kova-url` background-pulls traces every 5s (override
 `--sync-interval` / `--no-sync`). Headless: `lumen pull --watch`. Kova has no
-trace SSE yet — pull-based is the honest real-time path.
+trace SSE yet — pull-based is the honest real-time path. Shipped in
+`lumen-cli-v0.3.2` binaries.
 
 ## Next candidates (pick one per cycle)
 
