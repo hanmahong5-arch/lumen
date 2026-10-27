@@ -3,6 +3,8 @@
 Lumen **Core** works offline. This runbook unlocks the **Connected** layer
 (Flow, Terminal, Metrics, advisory) against a live Kova (and optionally Netdata).
 
+**三仓唯一操作面**（静态 / 运行 / 部署）：[`2b-svc-kova/docs/kova/TRIPLE.md`](../../2b-svc-kova/docs/kova/TRIPLE.md) — 在 Kova 仓跑 `bash scripts/triple.sh help`（含 viewer key 配方与 Demo Day joint）。
+
 ## Prerequisites
 
 - A running `kova-rest` (local or STAGE) with an API key
@@ -13,8 +15,9 @@ Lumen **Core** works offline. This runbook unlocks the **Connected** layer
 
 ```bash
 # 1. Point Lumen at Kova (API key stays server-side; never sent to the browser)
-export LUMEN_KOVA_URL=http://localhost:3010
-export LUMEN_KOVA_API_KEY=sk-kova-…   # or KOVA_API_KEY
+#    Prefer 127.0.0.1 on Windows (localhost can hit ::1 first) — see TRIPLE.md
+export LUMEN_KOVA_URL=http://127.0.0.1:3010
+export LUMEN_KOVA_API_KEY=sk-kova-…   # or KOVA_API_KEY; triple.sh env --howto-viewer
 
 # 2. Live UI — Flow / Terminal / advisory unlock; traces auto-sync from Kova
 #    every 5s into ./traces (UI refresh is also 4s). No separate pull needed.

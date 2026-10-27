@@ -109,6 +109,7 @@ provider is only ever called by your own code, never by Lumen.
 Kova is a **deepener**, not a prerequisite. Local crash-recovery storytelling works via
 LangGraph `LumenCheckpointer` + lifecycle HTML; WAL-depth recovery and Flow/Governor live on Kova.
 10-minute joint path: [docs/CONNECTED.md](docs/CONNECTED.md).
+Forge × Kova × Lumen operator surface: sibling [`2b-svc-kova/docs/kova/TRIPLE.md`](../2b-svc-kova/docs/kova/TRIPLE.md) (`bash scripts/triple.sh help`).
 
 ## Configuration
 
