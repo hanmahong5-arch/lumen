@@ -5,6 +5,8 @@ Lumen **Core** works offline. This runbook unlocks the **Connected** layer
 
 **三仓唯一操作面**（静态 / 运行 / 部署）：[`2b-svc-kova/docs/kova/TRIPLE.md`](../../2b-svc-kova/docs/kova/TRIPLE.md) — 在 Kova 仓跑 `bash scripts/triple.sh help`（含 viewer key 配方与 Demo Day joint）。
 
+**最近联测账本**（2026-10-28）：[`docs/kova/runs/2026-10-28-triple-joint.md`](../../2b-svc-kova/docs/kova/runs/2026-10-28-triple-joint.md) · 公开文档：[docs.lurus.cn/kova/triple-joint](https://docs.lurus.cn/kova/triple-joint)。当天编排腿已绿；真 LLM→Lumen 导出因供应商 402 未完成（账本如实记载，不假绿）。
+
 ## Prerequisites
 
 - A running `kova-rest` (local or STAGE) with an API key
