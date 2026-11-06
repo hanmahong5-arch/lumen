@@ -53,9 +53,11 @@ feel more real-time without changing Kova.
 
 ## Forge embed
 
-Enterprise demos should set `FORGE_LUMEN_BIN` to the Lumen binary so lifecycle
-export is a **non-skippable** demo screen (same HTML as `lumen export`).
-If the binary is missing, fall back to Core sample: `lumen demo` (offline).
+Set `FORGE_LUMEN_BIN` to the Lumen binary. When `lifecycle_ready` (bin + Kova),
+Forge `/demo` **auto-opens** the lifecycle HTML on run completion and gates the
+Closed Beta CTA until it is viewed (popup tab, or inline modal if popups are
+blocked). Same HTML as `lumen export`. If the binary is missing, fall back to
+Core sample: `lumen demo` (offline).
 
 ## Contract hygiene
 

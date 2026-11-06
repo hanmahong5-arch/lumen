@@ -1,28 +1,17 @@
 """Lumen — Illuminate your AI agents.
 
-Replay any run. Track every dollar. Never lose agent state.
+Replay any run. Track every dollar. Resume after a crash (LangGraph checkpointer).
 
 Quick start::
 
     from lumen import instrument, trace
 
-    instrument()  # auto-detect OpenAI / Anthropic / LangGraph
+    instrument()  # patches OpenAI / Anthropic when installed
+    # LangGraph: pass LumenTracer via callbacks (see integrations.langgraph)
 
-    # All LLM calls are now traced automatically.
-    # Group calls into one trace:
     with trace("research-task"):
         response = client.chat.completions.create(model="gpt-4o", ...)
 
-    # Async context manager:
-    async with atrace("research-task") as t:
-        ...
-
-    # Decorator form:
-    @traced_fn("my-agent")
-    def my_func():
-        ...
-
-    # Query traces:
     from lumen import TraceQuery
     results = TraceQuery("./traces").agent("research").since("7d").execute()
 """
@@ -32,7 +21,6 @@ __version__ = "0.2.1"
 from lumen._anomaly import AnomalyDetector
 from lumen._batch_writer import BatchTraceWriter
 from lumen._budget import BudgetExceededError, BudgetTracker
-from lumen._diff import TraceDiff, compare_traces
 from lumen._errors import (
     ConfigWarning,
     IntegrationWarning,
@@ -40,79 +28,47 @@ from lumen._errors import (
     RedactionWarning,
     TraceWriteWarning,
 )
-from lumen._event_bus import EventBus, TraceCompleted, BudgetAlert, CostAnomaly, get_default_bus
-from lumen._lru_cache import LRUCache
-from lumen._metrics import RuntimeMetrics
-from lumen._middleware import MiddlewareChain, TraceMiddleware
-from lumen._protocols import (
-    MetricsCollector,
-    PricingProvider,
-    RedactionProvider,
-    TraceReader,
-    TraceWriter,
-)
-from lumen._redaction import RedactionEngine, RedactionPattern
-from lumen._ring_buffer import MetricsWindow, RingBuffer
-from lumen._trace_index import TraceIndex, TraceMeta
-from lumen._trie import PrefixTrie
 from lumen._otlp import OtlpHttpTraceWriter
+from lumen._redaction import RedactionEngine, RedactionPattern
 from lumen._writers import CompositeWriter, FileTraceWriter, NullWriter
 from lumen.config import LumenConfig
 from lumen.cost import CostReport, CostTracker
 from lumen.instrument import atrace, get_metrics, instrument, trace, traced_fn, uninstrument
-from lumen.pricing import estimate_cost
+from lumen.pricing import estimate_cost, is_fallback_pricing
 from lumen.query import TraceQuery, TraceQueryResult
-from lumen.replay import ReplayEngine, ReplayTrace
+from lumen.replay import ReplayEngine, ReplayTrace, ReplayStep, ReplayToolCall
 from lumen.trace_reader import AgentTrace, load_traces
 
-# Agent / traced stubs live in lumen.agent but are intentionally NOT exported —
-# use LangGraph + LumenCheckpointer / LumenTracer instead.
+# Internal helpers (trie, ring buffer, event bus, middleware, agent stubs) stay
+# importable from their modules but are not part of the public black-box surface.
 
 __all__ = [
     "AgentTrace",
     "AnomalyDetector",
     "BatchTraceWriter",
-    "BudgetAlert",
     "BudgetExceededError",
     "BudgetTracker",
-    "compare_traces",
     "CompositeWriter",
     "ConfigWarning",
-    "CostAnomaly",
     "CostReport",
     "CostTracker",
-    "EventBus",
     "FileTraceWriter",
-    "get_default_bus",
     "get_metrics",
     "IntegrationWarning",
-    "LRUCache",
+    "is_fallback_pricing",
     "LumenConfig",
     "LumenWarning",
-    "MetricsCollector",
-    "MetricsWindow",
-    "MiddlewareChain",
     "NullWriter",
     "OtlpHttpTraceWriter",
-    "PrefixTrie",
-    "PricingProvider",
     "RedactionEngine",
     "RedactionPattern",
-    "RedactionProvider",
     "RedactionWarning",
     "ReplayEngine",
+    "ReplayStep",
+    "ReplayToolCall",
     "ReplayTrace",
-    "RingBuffer",
-    "RuntimeMetrics",
-    "TraceCompleted",
-    "TraceDiff",
-    "TraceIndex",
-    "TraceMeta",
-    "TraceMiddleware",
     "TraceQuery",
     "TraceQueryResult",
-    "TraceReader",
-    "TraceWriter",
     "TraceWriteWarning",
     "atrace",
     "estimate_cost",

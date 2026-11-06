@@ -2,6 +2,10 @@
 
 Loads trace data and reconstructs the step-by-step execution sequence,
 grouping LLM decisions with their tool call results. Zero LLM cost.
+
+Step shape mirrors Rust ``lumen-core::replay::build_replay_steps``:
+one replay step per LLM iteration (multiple tools → one ``tool_call`` step
+with ``tool_calls`` populated).
 """
 
 from __future__ import annotations
@@ -11,6 +15,16 @@ from typing import Any
 
 from lumen.pricing import estimate_cost
 from lumen.trace_reader import AgentTrace, load_traces
+
+
+@dataclass
+class ReplayToolCall:
+    """One tool invocation inside a tool_call replay step (mirrors Rust)."""
+
+    tool_name: str
+    success: bool = True
+    call_id: str = ""
+    output_preview: str = ""
 
 
 @dataclass
@@ -24,6 +38,8 @@ class ReplayStep:
     content: str | None = None
     success: bool = True
     timestamp_ms: int = 0
+    duration_ms: int = 0
+    tool_calls: list[ReplayToolCall] = field(default_factory=list)
 
 
 @dataclass
@@ -39,10 +55,12 @@ class ReplayTrace:
     """Full replay of an agent run."""
 
     trace_id: str = ""
+    agent_name: str = ""
     steps: list[ReplayStep] = field(default_factory=list)
     original_cost_usd: float = 0.0
     total_iterations: int = 0
     success: bool = False
+    total_duration_ms: int = 0
     recovery: RecoveryInfo | None = None
 
 
@@ -81,85 +99,102 @@ def _estimate_trace_cost(trace: AgentTrace) -> float:
     return total
 
 
-def _build_replay_steps(trace: AgentTrace) -> list[ReplayStep]:
-    """Group trace steps into replay steps.
+def _flush_tools(
+    replay_steps: list[ReplayStep],
+    step_num: int,
+    pending: list[ReplayToolCall],
+    pending_ts: int,
+    pending_dur: int,
+) -> int:
+    """Append one aggregated tool_call step; return next step_num."""
+    if not pending:
+        return step_num
+    step_num += 1
+    first = pending[0]
+    replay_steps.append(
+        ReplayStep(
+            step=step_num,
+            decision_type="tool_call",
+            tool_name=first.tool_name,
+            success=all(t.success for t in pending),
+            timestamp_ms=pending_ts,
+            duration_ms=pending_dur,
+            tool_calls=list(pending),
+        )
+    )
+    return step_num
 
-    Algorithm (mirrors Rust lumen-core replay::build_replay_steps):
-    - Each LlmCall with finish_reason="tool_use" groups with subsequent ToolCall steps
-    - Each LlmCall with terminal finish_reason ("stop","end_turn") becomes a FinalAnswer
-    - Error steps become FinalAnswer with error content
-    """
-    steps_raw = trace.steps
+
+def _build_replay_steps(trace: AgentTrace) -> list[ReplayStep]:
+    """Group trace steps into replay steps (Rust ``build_replay_steps``)."""
     replay_steps: list[ReplayStep] = []
     step_num = 0
-    i = 0
+    pending: list[ReplayToolCall] = []
+    pending_ts = 0
+    pending_dur = 0
 
-    while i < len(steps_raw):
-        s = steps_raw[i]
-
+    for s in trace.steps:
         if s.step_type == "LlmCall":
-            step_num += 1
+            step_num = _flush_tools(
+                replay_steps, step_num, pending, pending_ts, pending_dur
+            )
+            pending = []
+            pending_dur = 0
+
             finish = s.finish_reason or ""
-
             if finish in ("stop", "end_turn"):
-                # Terminal LLM call → FinalAnswer
-                replay_steps.append(ReplayStep(
-                    step=step_num,
-                    decision_type="final_answer",
-                    content=f"Final answer (finish_reason={finish})",
-                    timestamp_ms=s.started_at_ms,
-                ))
-                i += 1
-            else:
-                # tool_use → collect subsequent ToolCall steps
-                i += 1
-                while i < len(steps_raw) and steps_raw[i].step_type == "ToolCall":
-                    tc = steps_raw[i]
-                    replay_steps.append(ReplayStep(
+                step_num += 1
+                replay_steps.append(
+                    ReplayStep(
                         step=step_num,
-                        decision_type="tool_call",
-                        tool_name=tc.tool_name,
-                        success=tc.tool_success if tc.tool_success is not None else True,
-                        timestamp_ms=tc.started_at_ms,
-                    ))
-                    i += 1
-
-                # If no tool calls followed, still record the LLM step
-                if not replay_steps or replay_steps[-1].step != step_num:
-                    replay_steps.append(ReplayStep(
-                        step=step_num,
-                        decision_type="tool_call",
-                        tool_name="(no tools executed)",
+                        decision_type="final_answer",
+                        content=f"Agent completed ({finish})",
                         timestamp_ms=s.started_at_ms,
-                    ))
+                        duration_ms=s.duration_ms,
+                    )
+                )
+            else:
+                pending_ts = s.started_at_ms
+                pending_dur += s.duration_ms
+
+        elif s.step_type == "ToolCall":
+            if pending_ts == 0:
+                pending_ts = s.started_at_ms
+            pending_dur += s.duration_ms
+            ok = s.tool_success if s.tool_success is not None else True
+            pending.append(
+                ReplayToolCall(
+                    tool_name=s.tool_name or "(unknown)",
+                    success=ok,
+                    call_id=f"step_{s.step_num}",
+                    output_preview=(
+                        f"ok ({s.duration_ms}ms)" if ok else "failed"
+                    ),
+                )
+            )
 
         elif s.step_type == "Error":
+            step_num = _flush_tools(
+                replay_steps, step_num, pending, pending_ts, pending_dur
+            )
+            pending = []
+            pending_dur = 0
             step_num += 1
-            replay_steps.append(ReplayStep(
-                step=step_num,
-                decision_type="final_answer",
-                content=f"Error: {s.error_message or 'unknown error'}",
-                success=False,
-                timestamp_ms=s.started_at_ms,
-            ))
-            i += 1
+            replay_steps.append(
+                ReplayStep(
+                    step=step_num,
+                    decision_type="final_answer",
+                    content=f"Error: {s.error_message or 'unknown error'}",
+                    success=False,
+                    timestamp_ms=s.started_at_ms,
+                    duration_ms=s.duration_ms,
+                )
+            )
 
         elif s.step_type == "Checkpoint":
-            # Skip checkpoints in replay
-            i += 1
+            continue
 
-        else:
-            # Standalone ToolCall without preceding LlmCall (unusual)
-            step_num += 1
-            replay_steps.append(ReplayStep(
-                step=step_num,
-                decision_type="tool_call",
-                tool_name=s.tool_name,
-                success=s.tool_success if s.tool_success is not None else True,
-                timestamp_ms=s.started_at_ms,
-            ))
-            i += 1
-
+    step_num = _flush_tools(replay_steps, step_num, pending, pending_ts, pending_dur)
     return replay_steps
 
 
@@ -198,6 +233,10 @@ class ReplayEngine:
 
         Raises:
             ValueError: If trace_id not found in trace directory.
+
+        Note:
+            Mid-run filtering (``--from-step``) is a CLI concern; this API
+            always returns the full reconstructed sequence.
         """
         traces = load_traces(self.trace_dir)
         target = None
@@ -212,15 +251,20 @@ class ReplayEngine:
                 f"Available: {[t.trace_id for t in traces[:5]]}"
             )
 
-        # Count LLM iterations
         llm_count = sum(1 for s in target.steps if s.step_type == "LlmCall")
+        steps = _build_replay_steps(target)
+        total_dur = 0
+        if target.completed_at_ms and target.started_at_ms:
+            total_dur = max(0, target.completed_at_ms - target.started_at_ms)
 
         return ReplayTrace(
             trace_id=target.trace_id,
-            steps=_build_replay_steps(target),
+            agent_name=target.agent_id,
+            steps=steps,
             original_cost_usd=_estimate_trace_cost(target),
             total_iterations=llm_count,
             success=target.status == "Completed",
+            total_duration_ms=total_dur,
             recovery=_extract_recovery(target),
         )
 

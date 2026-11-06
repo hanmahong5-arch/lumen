@@ -28,7 +28,7 @@ lumen demo                                 # offline sample lifecycle HTML
 ```python
 from lumen import instrument, trace, traced_fn
 
-instrument()  # auto-detect OpenAI / Anthropic / LangGraph; all later calls recorded
+instrument()  # patches OpenAI / Anthropic when installed; LangGraph still needs LumenTracer
 
 # Group multiple calls into one trace:
 with trace("research-task") as t:
@@ -63,7 +63,8 @@ result = graph.invoke(
 
 - **Replay** (`lumen replay <id>`) — deterministically replay any agent run from trace JSON, zero LLM cost. Supports `--from-step N`.
 - **Cost tracking** (`lumen cost`) — per-agent, per-model dollar breakdown; flags per-run **cost outliers** (> 2× run mean). For metric-level **ML anomaly** detection, see Metrics & ML anomaly below.
-- **Crash recovery** — process dies, agent resumes from last checkpoint. `LumenCheckpointer` does file-backed 3μs checkpoint writes (vs SQLite ~100μs, PostgreSQL ~1ms), zero external services.
+- **Crash recovery** — process dies, agent resumes from last checkpoint via file-backed
+  `LumenCheckpointer` (zero external services). Persistence is best-effort on disk errors.
 
 Python API:
 

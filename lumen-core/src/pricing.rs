@@ -23,6 +23,7 @@ const PRICING_TABLE: &[(&str, f64, f64)] = &[
     ("claude-3-haiku", 0.25, 1.25),
     // OpenAI GPT-4o
     ("gpt-4o-mini", 0.15, 0.60),
+    ("gpt-4o-audio", 2.50, 10.0),
     ("gpt-4o", 2.50, 10.0),
     // OpenAI GPT-4
     ("gpt-4-turbo", 10.0, 30.0),

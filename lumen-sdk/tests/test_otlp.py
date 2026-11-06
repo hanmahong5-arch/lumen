@@ -76,10 +76,13 @@ class TestLumenTraceToOtlp:
         llm_attrs = {a["key"]: a["value"] for a in llm["attributes"]}
         assert llm_attrs["lumen.step.kind"]["stringValue"] == "LlmCall"
         assert llm_attrs["gen_ai.request.model"]["stringValue"] == "claude-sonnet-4-6"
+        assert llm_attrs["gen_ai.operation.name"]["stringValue"] == "chat"
         assert llm_attrs["gen_ai.usage.input_tokens"]["intValue"] == "500"
 
         tool_attrs = {a["key"]: a["value"] for a in tool["attributes"]}
         assert tool_attrs["lumen.tool.name"]["stringValue"] == "search_web"
+        assert tool_attrs["gen_ai.operation.name"]["stringValue"] == "execute_tool"
+        assert tool_attrs["gen_ai.tool.name"]["stringValue"] == "search_web"
 
     def test_failed_status_maps_to_error(self) -> None:
         failed = {**SAMPLE_TRACE, "status": "Failed"}

@@ -19,10 +19,12 @@ name is unrelated).
 
 ## Core capabilities
 
-- **One-line auto-instrumentation** — `instrument()` patches the OpenAI and Anthropic SDK clients and
-  LangGraph so every call is traced without touching call sites (`lumen-sdk/lumen/instrument.py`).
-- **Deterministic replay** — replay any past run from its trace JSON with zero LLM calls, optionally
-  starting mid-run with `--from-step` (`lumen-core/src/replay.rs`, `lumen-sdk/lumen/replay.py`).
+- **One-line auto-instrumentation** — `instrument()` patches the OpenAI and Anthropic SDK clients.
+  LangGraph needs an explicit `LumenTracer` in `callbacks` (detection only — no monkey-patch)
+  (`lumen-sdk/lumen/instrument.py`, `lumen-sdk/lumen/integrations/langgraph_tracer.py`).
+- **Deterministic replay** — replay any past run from its trace JSON with zero LLM calls.
+  CLI `lumen replay --from-step N` starts mid-run; Python `ReplayEngine.replay()` returns the full
+  sequence (`lumen-core/src/replay.rs`, `lumen-sdk/lumen/replay.py`).
 - **Cost tracking and pricing** — per-agent, per-model USD breakdown from token counts, covering 30+
   models, with per-run cost-outlier flagging (`lumen-core/src/cost.rs`, `lumen-core/src/pricing.rs`,
   `lumen-sdk/lumen/cost.py`, `lumen-sdk/lumen/pricing.py`).
@@ -65,7 +67,7 @@ pip install -e "./lumen-sdk[langgraph]"
 ```python
 from lumen import instrument, trace
 
-instrument()  # auto-detect OpenAI / Anthropic / LangGraph; all later calls recorded
+instrument()  # patches OpenAI / Anthropic when installed; LangGraph still needs LumenTracer
 
 with trace("research-task") as t:
     r1 = client.chat.completions.create(model="your-model", messages=[...])

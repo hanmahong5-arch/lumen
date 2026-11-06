@@ -169,8 +169,11 @@ def lumen_trace_to_otlp(
         ]
         if model:
             step_attrs.append(_attr_str("gen_ai.request.model", model))
+            step_attrs.append(_attr_str("gen_ai.operation.name", "chat"))
         if tool_name:
             step_attrs.append(_attr_str("lumen.tool.name", tool_name))
+            step_attrs.append(_attr_str("gen_ai.operation.name", "execute_tool"))
+            step_attrs.append(_attr_str("gen_ai.tool.name", tool_name))
 
         tokens = step.get("tokens") if isinstance(step.get("tokens"), dict) else {}
         tokens_in = (

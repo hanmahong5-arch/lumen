@@ -16,10 +16,12 @@ CLI 走 GitHub Release 二进制；Python SDK 暂从本仓库安装（**不要**
 
 ## 核心能力
 
-- **一行自动埋点** —— `instrument()` 给 OpenAI、Anthropic SDK 客户端和 LangGraph 打补丁，调用点无需
-  改动即可全量记录 (`lumen-sdk/lumen/instrument.py`)。
-- **确定性回放** —— 从 trace JSON 零 LLM 花费地重放任意一次历史运行，可用 `--from-step` 从中途某步开
-  始 (`lumen-core/src/replay.rs`、`lumen-sdk/lumen/replay.py`)。
+- **一行自动埋点** —— `instrument()` 给 OpenAI、Anthropic SDK 客户端打补丁。LangGraph 需在
+  `callbacks` 里显式传 `LumenTracer`（仅检测、不 monkey-patch）
+  (`lumen-sdk/lumen/instrument.py`、`langgraph_tracer.py`)。
+- **确定性回放** —— 从 trace JSON 零 LLM 花费地重放。CLI `lumen replay --from-step N` 可从中途开
+  始；Python `ReplayEngine.replay()` 返回完整序列
+  (`lumen-core/src/replay.rs`、`lumen-sdk/lumen/replay.py`)。
 - **成本追踪与定价** —— 按 agent、按模型汇总 token 折算的美元花费，覆盖 30+ 模型，并标记单次运行的
   成本离群值 (`lumen-core/src/cost.rs`、`lumen-core/src/pricing.rs`、`lumen-sdk/lumen/cost.py`、
   `lumen-sdk/lumen/pricing.py`)。

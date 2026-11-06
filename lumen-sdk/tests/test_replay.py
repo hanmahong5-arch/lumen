@@ -87,14 +87,18 @@ def test_replay_nonexistent_dir() -> None:
 
 
 def test_replay_step_count_matches_decisions(trace_dir: Path) -> None:
-    """Replay steps should match LLM decision count, not raw step count."""
+    """Replay steps aggregate tools per LLM iteration (Rust step-shape)."""
     engine = ReplayEngine(trace_dir=str(trace_dir))
     trace = engine.replay("trace_abc123")
 
-    # trace_abc123 has 3 LLM calls: 2 tool_use + 1 end_turn
-    # Replay groups: LLM+tool, LLM+tool, LLM(final) = 4 replay steps
-    # (2 tool_call steps + 1 read_url + 1 final_answer)
-    assert len(trace.steps) >= 3
+    # 2 tool_use iterations + 1 end_turn → 2 tool_call + 1 final_answer
+    assert [s.decision_type for s in trace.steps] == [
+        "tool_call",
+        "tool_call",
+        "final_answer",
+    ]
+    assert len(trace.steps[0].tool_calls) == 1
+    assert trace.steps[0].tool_calls[0].tool_name == "search_web"
 
 
 def test_replay_failed_trace_has_error_content(trace_dir: Path) -> None:

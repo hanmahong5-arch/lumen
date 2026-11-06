@@ -1,5 +1,5 @@
 {
-  "_comment": "Shared Rust/Python cost+replay expectations for trace_examples.json. Asserted by lumen-core/tests/behavior_parity.rs and lumen-sdk/tests/test_behavior_parity.py.",
+  "_comment": "Shared Rust/Python cost+replay expectations for trace_examples.json. Asserted by lumen-core/tests/behavior_parity.rs and lumen-sdk/tests/test_behavior_parity.py. replay_decisions locks step-shape (one entry per aggregated replay step).",
   "normal_multi_step": {
     "trace_id": "trace_normal_001",
     "cost_usd": 0.0123,
@@ -7,7 +7,8 @@
     "replay_iterations": 2,
     "replay_original_cost_usd": 0.0123,
     "replay_parent": null,
-    "replay_resumed_at": null
+    "replay_resumed_at": null,
+    "replay_decisions": ["tool_call", "final_answer"]
   },
   "recovered_with_parent": {
     "trace_id": "trace_recovered_002",
@@ -16,7 +17,8 @@
     "replay_iterations": 1,
     "replay_original_cost_usd": 4.5,
     "replay_parent": "trace_normal_001",
-    "replay_resumed_at": 4
+    "replay_resumed_at": 4,
+    "replay_decisions": ["final_answer"]
   },
   "legacy_no_parent_field": {
     "trace_id": "trace_legacy_003",
@@ -25,7 +27,8 @@
     "replay_iterations": 1,
     "replay_original_cost_usd": 4.5,
     "replay_parent": null,
-    "replay_resumed_at": null
+    "replay_resumed_at": null,
+    "replay_decisions": ["final_answer"]
   },
   "failed_trace": {
     "trace_id": "trace_failed_004",
@@ -34,6 +37,7 @@
     "replay_iterations": 1,
     "replay_original_cost_usd": 1.35,
     "replay_parent": null,
-    "replay_resumed_at": null
+    "replay_resumed_at": null,
+    "replay_decisions": ["tool_call", "final_answer"]
   }
 }

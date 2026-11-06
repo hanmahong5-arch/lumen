@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from lumen.pricing import PRICING, estimate_cost, register_custom_pricing, _CUSTOM_TRIE
+from lumen.pricing import (
+    PRICING,
+    estimate_cost,
+    is_fallback_pricing,
+    register_custom_pricing,
+    _CUSTOM_TRIE,
+)
 
 
 def test_exact_match() -> None:
@@ -35,6 +41,7 @@ def test_gpt4o_pricing() -> None:
 
 
 def test_fallback_for_unknown_model() -> None:
+    assert is_fallback_pricing("totally-unknown-model-xyz")
     cost = estimate_cost("totally-unknown-model-xyz", prompt_tokens=1000, completion_tokens=500)
     # Fallback: $1.0/$3.0 per 1K
     expected = (1000 * 1.0 + 500 * 3.0) / 1000.0

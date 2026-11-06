@@ -54,28 +54,46 @@ class LumenTracer(_Base):  # type: ignore[misc]
     ``lumen replay`` and ``lumen cost``.
 
     Args:
-        trace_dir: Directory to write trace JSON files.
+        trace_dir: Directory to write trace JSON files. Defaults to
+            ``LumenConfig`` / ``LUMEN_TRACE_DIR`` when omitted.
         agent_name: Name to identify this agent in traces.
+        config: Optional ``LumenConfig``. When OTLP export is enabled,
+            completed traces fan out through the same writer pipeline as
+            ``instrument()``.
 
-    Requires ``langchain-core>=0.3``. Install from the ``lumen-sdk``
-    source directory::
+    Requires ``langchain-core>=0.3``. Install::
 
-        pip install -e ".[langgraph]"
+        pip install "lumen-ai[langgraph]"
     """
 
     def __init__(
         self,
-        trace_dir: str = "./traces",
+        trace_dir: str | None = None,
         agent_name: str = "langgraph-agent",
+        *,
+        config: Any | None = None,
     ) -> None:
         if _HAS_LANGCHAIN:
             super().__init__()
-        self.trace_dir = Path(trace_dir)
+
+        from lumen.config import LumenConfig
+        from lumen.instrument import _create_writer
+
+        from dataclasses import replace
+
+        cfg = config if config is not None else LumenConfig.auto()
+        # Callbacks write one completed run at a time — never batch-delay.
+        dir_ = trace_dir if trace_dir is not None else cfg.tracing.trace_dir
+        tracing = replace(cfg.tracing, trace_dir=dir_, buffer_size=1)
+        cfg = replace(cfg, tracing=tracing)
+
+        self.trace_dir = Path(cfg.tracing.trace_dir)
         try:
             self.trace_dir.mkdir(parents=True, exist_ok=True)
         except OSError:
             pass  # deferred to _write_trace where we warn properly
         self.agent_name = agent_name
+        self._writer = _create_writer(cfg)
 
         # State for current trace
         self._trace_id = ""
@@ -360,8 +378,12 @@ class LumenTracer(_Base):  # type: ignore[misc]
             "completed_at_ms": self._now_ms(),
         }
 
-        from lumen._context import _write_trace_safe
-        _write_trace_safe(trace_data, str(self.trace_dir), self._trace_id)
+        try:
+            self._writer.write_trace(trace_data)
+        except Exception:
+            from lumen._context import _write_trace_safe
+
+            _write_trace_safe(trace_data, str(self.trace_dir), self._trace_id)
 
         # Reset for next trace
         self._trace_id = ""

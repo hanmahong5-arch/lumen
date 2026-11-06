@@ -24,6 +24,8 @@ struct Expectation {
     replay_original_cost_usd: f64,
     replay_parent: Option<String>,
     replay_resumed_at: Option<u32>,
+    /// Aggregated decision kinds in order: `"tool_call"` | `"final_answer"`.
+    replay_decisions: Vec<String>,
 }
 
 fn fixtures_dir() -> PathBuf {
@@ -113,6 +115,16 @@ fn cost_and_replay_match_shared_expectations() {
             .and_then(|r| r.resumed_at_iteration);
         assert_eq!(parent, exp.replay_parent, "{name}");
         assert_eq!(resumed, exp.replay_resumed_at, "{name}");
+
+        let decisions: Vec<String> = replay
+            .steps
+            .iter()
+            .map(|s| match &s.decision {
+                lumen_core::replay::ReplayDecision::ToolCalls { .. } => "tool_call".into(),
+                lumen_core::replay::ReplayDecision::FinalAnswer { .. } => "final_answer".into(),
+            })
+            .collect();
+        assert_eq!(decisions, exp.replay_decisions, "{name}: step-shape drift");
 
         let _ = fs::remove_dir_all(&dir);
     }

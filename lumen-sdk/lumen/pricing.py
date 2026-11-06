@@ -54,7 +54,9 @@ PRICING: dict[str, tuple[float, float]] = {
     # Mistral
     "mistral-large": (2.0, 6.0),
     "mistral-small": (0.20, 0.60),
-    # DeepSeek
+    # DeepSeek (deepseek-chat is the V3 chat endpoint — same pricing as Rust)
+    "deepseek-chat": (0.27, 1.10),
+    "deepseek-reasoner": (0.55, 2.19),
     "deepseek-v3": (0.27, 1.10),
     "deepseek-r1": (0.55, 2.19),
 }
@@ -93,7 +95,7 @@ def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> flo
     Lookup order:
       1. Custom pricing (user-defined) — exact then prefix
       2. Built-in pricing — exact, prefix, then substring
-      3. Fallback — $1.00/$3.00 per 1K tokens
+      3. Fallback — $1.00/$3.00 per 1K tokens (see ``is_fallback_pricing``)
 
     Args:
         model: Model identifier string.
@@ -103,38 +105,46 @@ def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> flo
     Returns:
         Estimated cost in USD.
     """
-    prompt_price, completion_price = _lookup_pricing(model)
+    prompt_price, completion_price = _lookup_pricing(model)[0]
     return (prompt_tokens * prompt_price + completion_tokens * completion_price) / 1000.0
 
 
-def _lookup_pricing(model: str) -> tuple[float, float]:
-    """Look up pricing for a model using trie-based O(K) matching."""
+def is_fallback_pricing(model: str) -> bool:
+    """True when ``model`` is not in the built-in/custom table (conservative estimate)."""
+    return _lookup_pricing(model)[1]
+
+
+def _lookup_pricing(model: str) -> tuple[tuple[float, float], bool]:
+    """Look up pricing for a model using trie-based O(K) matching.
+
+    Returns ``((prompt_per_1k, completion_per_1k), used_fallback)``.
+    """
     model_lower = model.lower().strip()
 
     # 0. Custom pricing — user overrides take priority
     if _CUSTOM_TRIE:
         custom_exact = _CUSTOM_TRIE.get(model_lower)
         if custom_exact is not None:
-            return custom_exact
+            return custom_exact, False
         custom_prefix = _CUSTOM_TRIE.longest_prefix(model_lower)
         if custom_prefix is not None:
-            return custom_prefix[1]
+            return custom_prefix[1], False
 
     # 1. Exact match — O(K)
     exact = _PRICING_TRIE.get(model_lower)
     if exact is not None:
-        return exact
+        return exact, False
 
     # 2. Longest prefix match — O(K)
     # e.g. "claude-sonnet-4-6-20260301" → "claude-sonnet-4-6"
     prefix_result = _PRICING_TRIE.longest_prefix(model_lower)
     if prefix_result is not None:
-        return prefix_result[1]
+        return prefix_result[1], False
 
     # 3. Substring containment — O(N*K) fallback for provider-prefixed paths
     # e.g. "accounts/fireworks/models/llama-3.1-70b" → "llama-3.1-70b"
     for key in PRICING:
         if key in model_lower:
-            return PRICING[key]
+            return PRICING[key], False
 
-    return _FALLBACK_PRICING
+    return _FALLBACK_PRICING, True

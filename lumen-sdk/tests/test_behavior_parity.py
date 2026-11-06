@@ -75,3 +75,6 @@ def test_cost_and_replay_match_shared_expectations(
     resumed = None if replay.recovery is None else replay.recovery.resumed_at_iteration
     assert parent == exp["replay_parent"]
     assert resumed == exp["replay_resumed_at"]
+
+    decisions = [s.decision_type for s in replay.steps]
+    assert decisions == exp["replay_decisions"], f"{name}: step-shape drift"

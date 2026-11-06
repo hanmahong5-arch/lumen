@@ -38,16 +38,18 @@ Windows: `irm …/docs/install-cli.ps1 | iex`.
 
 ### One-time: Trusted Publisher
 
-1. On [pypi.org](https://pypi.org) create a **Pending publisher** for project
+1. GitHub Environment **`pypi`** already exists on `hanmahong5-arch/lumen`
+   (created 2026-11-06). Optional: add a required reviewer under
+   Settings → Environments → pypi.
+2. On [pypi.org](https://pypi.org) create a **Pending publisher** for project
    `lumen-ai` (creates the project on first successful upload):
    - Owner: `hanmahong5-arch`
    - Repository: `lumen`
    - Workflow name: `publish-lumen-sdk.yaml`
    - Environment name: `pypi`
-2. In the GitHub repo, create Environment **`pypi`** (Settings → Environments).
-   Optional: require a reviewer for production publishes.
 
-No long-lived `PYPI_API_TOKEN` is required (OIDC).
+No long-lived `PYPI_API_TOKEN` is required (OIDC). Until step 2 is done,
+`pip install lumen-ai` stays 404 — keep INSTALL.md honest.
 
 ### Each SDK cut
 
