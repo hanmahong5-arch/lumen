@@ -41,15 +41,23 @@ Windows: `irm …/docs/install-cli.ps1 | iex`.
 1. GitHub Environment **`pypi`** already exists on `hanmahong5-arch/lumen`
    (created 2026-11-06). Optional: add a required reviewer under
    Settings → Environments → pypi.
-2. On [pypi.org](https://pypi.org) create a **Pending publisher** for project
-   `lumen-ai` (creates the project on first successful upload):
+2. On [pypi.org/manage/account/publishing/](https://pypi.org/manage/account/publishing/)
+   create a **Pending publisher** for project `lumen-ai` (creates the project
+   on first successful upload). Match the OIDC claims from the failed
+   `lumen-sdk-v0.2.1` run exactly:
    - Owner: `hanmahong5-arch`
    - Repository: `lumen`
    - Workflow name: `publish-lumen-sdk.yaml`
    - Environment name: `pypi`
 
+3. Re-run publish: `gh workflow run publish-lumen-sdk.yaml` will not upload
+   (tag-only). Either delete+retag `lumen-sdk-v0.2.1` after the publisher is
+   live, or bump to `0.2.2` / tag `lumen-sdk-v0.2.2` and push.
+
 No long-lived `PYPI_API_TOKEN` is required (OIDC). Until step 2 is done,
-`pip install lumen-ai` stays 404 — keep INSTALL.md honest.
+`pip install lumen-ai` stays 404 — keep INSTALL.md honest. First tag attempt
+(`lumen-sdk-v0.2.1`, run 42147653742) failed with `invalid-publisher` as
+expected before the pending publisher exists.
 
 ### Each SDK cut
 
