@@ -19,6 +19,7 @@ of `2b-svc-kova` (vendored AgentTrace, not a path dependency).
 | Habit | Cost narrative (`--format md`), resume ritual, shareable lifecycle HTML | `docs/RESUME.md`, `lumen cost --format md`, `lumen export` |
 | Power-Up | Core vs Connected docs, Forge `FORGE_LUMEN_BIN` note | `docs/CONNECTED.md` |
 | Forge embed | `/demo` auto-open lifecycle + gate Closed Beta when `lifecycle_ready` | `2b-bs-forge` `demo-lifecycle-gate.ts` + `/demo` page |
+| Forge Trust Loop v1–v2 | Lifecycle gate + `/ops` smoke SKIP≠PASS + role golden path; deny/cost structural honesty | `2b-bs-forge` `docs/trust-loop.md`, `trajectory_match` deny_roles/max_cost_usd |
 | Deep bet | LangGraph `resume_hint`, Rust↔Python cost/replay parity fixtures, real OTLP/HTTP JSON export | `behavior_expectations.json`, `lumen/_otlp.py`, PR #10–#13 |
 
 ## Deliberately not shipped
@@ -46,7 +47,8 @@ trace SSE yet — pull-based is the honest real-time path. Shipped in
 
 1. **First PyPI cut** — GitHub env `pypi` exists; finish one-time pypi.org Pending publisher, then tag `lumen-sdk-v*`
 2. ~~**Step-shape replay alignment**~~ — done (shared `replay_decisions` in behavior_expectations)
-3. **Kova-side trace push/SSE** — only if pull interval is proven insufficient
-4. **STAGE true-LLM Demo Day** — after backend image with baked `FORGE_LUMEN_BIN` deploys (see kova runs ledger 2026-11-06)
+3. ~~**Forge structural honesty (deny/cost)**~~ — done (`trajectory_match` deny_roles + max_cost_usd; see Forge `docs/trust-loop.md`)
+4. **Kova-side trace push/SSE** — only if pull interval is proven insufficient
+5. **STAGE true-LLM Demo Day** — owner: rebuild R1/stage backend image ≥ bake `9bd753e`, then `JOINT_MOCK_LLM=0` ledger (kova runs)
 
 Rule: measure progress by install → 5-minute incident HTML → shareable artifact, not feature-list length.
